@@ -1,6 +1,6 @@
 # pexpr
 
-**THIS IS AI-GENERATED CONTENT**
+**AI-GENERATED CONTENT**
 
 A small C library for **P Expression**, an S-expression-like serialization
 format with four value types — integers, reals, strings, and lists:
