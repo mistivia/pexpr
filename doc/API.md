@@ -36,81 +36,74 @@ use `pnode_list_len()`. Because elements are values, `node->list[i]` is a
 ### Building values
 
 ```c
-struct pnode n = pnode_new_integ(42);
-struct pnode s = pnode_new_str("hi", 2);   /* copies the bytes */
-struct pnode s2 = pnode_new_cstr("hi");    /* same, len = strlen(s) */
+struct pnode n = pnode_make_integ(42);
+struct pnode s = pnode_make_str("hi", 2);   /* copies the bytes */
+struct pnode s2 = pnode_make_cstr("hi");    /* same, len = strlen(s) */
 
-struct pnode list = pnode_new_list();       /* starts empty */
-pnode_list_append(&list, pnode_new_integ(1));
-pnode_list_append(&list, pnode_new_integ(2));
-pnode_list_append(&list, s);                /* moved into list; don't touch s again */
+struct pnode list = pnode_make_list();       /* starts empty */
+pnode_list_append(&list, pnode_make_integ(1));
+pnode_list_append(&list, pnode_make_integ(2));
+pnode_list_append(&list, s);                 /* moved into list; don't touch s again */
 
-size_t n_children = pnode_list_len(&list);  /* 3 */
-int64_t second = list.list[1].integ;        /* 2 */
+size_t n_children = pnode_list_len(&list);   /* 3 */
+int64_t second = list.list[1].integ;         /* 2 */
 
-pnode_free(&list);                          /* frees everything list owns */
-pnode_free(&n);
-pnode_free(&s2);
+pnode_drop(&list);                           /* releases everything list owns */
+pnode_drop(&n);
+pnode_drop(&s2);
 ```
 
-`pnode_new_integ()`/`pnode_new_real()`/`pnode_new_list()` never fail (they
-don't allocate anything up front). `pnode_new_str()`/`pnode_new_cstr()` do
-allocate a copy of the bytes immediately, so they *can* fail - check with
-`pnode_ok()`:
+`pnode_make_integ()`/`pnode_make_real()`/`pnode_make_list()` never fail
+(they don't allocate anything up front). `pnode_make_str()`/
+`pnode_make_cstr()` do allocate a copy of the bytes immediately, so they
+*can* fail - check with `pnode_ok()`:
 
 ```c
-struct pnode s = pnode_new_str(huge_buf, huge_len);
+struct pnode s = pnode_make_str(huge_buf, huge_len);
 if (!pnode_ok(&s)) {
-    /* allocation failed; s.str is NULL, safe to pnode_free() (a no-op)
+    /* allocation failed; s.str is NULL, safe to pnode_drop() (a no-op)
      * or just drop on the floor */
 }
 ```
 
 `pnode_list_append()` **moves** `child`'s contents into the list's array
-- on success, `child` is consumed: don't read it, free it, or append it
-again afterward (that's why the snippet above doesn't `pnode_free(&s)`
+- on success, `child` is consumed: don't read it, drop it, or append it
+again afterward (that's why the snippet above doesn't `pnode_drop(&s)`
 separately). Since `child` is passed by value, a failed append (`-1`,
 bad `list`, or allocation failure) simply leaves the caller's own copy
-of `child` untouched, still theirs to free.
+of `child` untouched, still theirs to drop.
 
-### Freeing
+### Dropping
 
 ```c
-void pnode_free(struct pnode *node);
+void pnode_drop(struct pnode *node);
 ```
 
-`pnode_free()` switches on `type` to release what a node owns directly
+`pnode_drop()` switches on `type` to release what a node owns directly
 (the string buffer for `PTYPE_STR`, the `list` array itself for
-`PTYPE_LIST`) and recurses into each element of `list` to free what *it*
-owns in turn - but **not** `node` itself, since this library never
-allocated it. It's NULL-safe and safe to call more than once on the same
-node (it resets what it just freed to an empty, still-freeable state).
-
-If you have a heap-allocated `struct pnode *` instead - the kind
-`pexpr_parse()` or `p_parser_get_result()` hands back - use
-`pnode_delete()` instead, which does `pnode_free()` and then frees the
-pointer itself:
-
-```c
-struct pnode *parsed = pexpr_parse(text, len);
-/* ... */
-pnode_delete(parsed);
-```
+`PTYPE_LIST`) and recurses into each element of `list` to release what
+*it* owns in turn - but **not** `node` itself, since this library never
+allocated it (nor, per below, does it ever hand back a heap pointer
+anymore - there's nothing left in the API that isn't a plain value).
+`pnode_drop()` is NULL-safe and safe to call more than once on the same
+node (it resets what it just released to an empty, still-droppable
+state).
 
 ### Copying
 
 ```c
 struct pnode dup = pnode_copy(&list); /* deep copy, shares no memory with list */
-pnode_free(&list);                     /* dup is still fully valid */
-pnode_free(&dup);
+pnode_drop(&list);                     /* dup is still fully valid */
+pnode_drop(&dup);
 ```
 
 `pnode_copy()` recursively duplicates a value — every string's bytes and
 every list descendant get their own allocation — so the original and the
-copy can be freed independently in either order. `node` must not be
+copy can be dropped independently in either order. `node` must not be
 `NULL`. On allocation failure, returns a value for which `pnode_ok()` is
 false; anything already copied before the failure is cleaned up
-internally, so there's nothing extra for the caller to free in that case.
+internally, so there's nothing extra for the caller to release in that
+case.
 
 ## Serializing
 
@@ -122,21 +115,24 @@ free(text);
 ```
 
 `out_len` may be `NULL` if you don't need it (the buffer is NUL-terminated
-regardless). Serialization fails (`NULL`) for a `NULL` node, a NaN/Inf
-`double` anywhere in the tree, or on allocation failure.
+regardless). Serialization fails (`NULL`) for a `NULL` node, a node for
+which `pnode_ok()` is false anywhere in the tree, a NaN/Inf `double`
+anywhere in the tree, or on allocation failure.
 
 ## Parsing a complete buffer
 
 ```c
-struct pnode *n = pexpr_parse("[1 2 [4 5 \"str\"]]", 17);
-if (!n) { /* syntax error, or allocation failure */ }
-pnode_delete(n);
+struct pnode n = pexpr_parse("[1 2 [4 5 \"str\"]]", 17);
+if (!pnode_ok(&n)) { /* syntax error, or allocation failure */ }
+pnode_drop(&n);
 ```
 
 Trailing bytes after the first complete value are ignored — this parses
-exactly one value. Unlike the `pnode_new_*()` family, this returns a
-heap-allocated `struct pnode *` (there's no caller-provided storage to
-write into), so free it with `pnode_delete()`, not `pnode_free()`.
+exactly one value. Like every other constructor in this library,
+`pexpr_parse()` returns `struct pnode` by value; check success with
+`pnode_ok()` rather than a `NULL` check, and release the result (whether
+or not it's ok - dropping a not-ok value is always a safe no-op) with
+`pnode_drop()`.
 
 ## Streaming
 
@@ -157,9 +153,9 @@ do {
 } while (st == P_PARSER_PAUSE);
 
 if (st == P_PARSER_SUCC) {
-    struct pnode *result = p_parser_get_result(&p); /* also resets p */
+    struct pnode result = p_parser_get_result(&p); /* also resets p */
     /* ... use result ... */
-    pnode_delete(result);
+    pnode_drop(&result);
 } else {
     fprintf(stderr, "parse error: %s\n", p_parser_errmsg(&p));
 }
@@ -180,10 +176,10 @@ Key points:
   reinitialize.
 - **`p_parser_get_result()` resets the parser** on success, so the same
   `struct p_parser` can parse another value right away — no need to
-  `p_parser_destroy()` + `p_parser_init()` between documents. Like
-  `pexpr_parse()`, it hands back a heap-allocated `struct pnode *` (a
-  single small shell wrapping the value that was parsed on the coroutine's
-  stack) - free it with `pnode_delete()`.
+  `p_parser_destroy()` + `p_parser_init()` between documents. It returns
+  `struct pnode` by value, same as `pexpr_parse()`; called when not in
+  `P_PARSER_SUCC`, it returns a value for which `pnode_ok()` is false
+  and leaves `self` untouched.
 - **`p_parser_destroy()` is always safe**, including mid-parse (e.g. you
   decide to give up after a timeout). It's implemented on top of a
   [minicoro](https://github.com/edubart/minicoro) coroutine so the

@@ -24,19 +24,19 @@ See [`doc/FORMAT.md`](doc/FORMAT.md) for the format spec and
 #include <stdio.h>
 
 int main(void) {
-    struct pnode list = pnode_new_list();
-    pnode_list_append(&list, pnode_new_integ(1));
-    pnode_list_append(&list, pnode_new_integ(2));
-    pnode_list_append(&list, pnode_new_str("str", 3));
+    struct pnode list = pnode_make_list();
+    pnode_list_append(&list, pnode_make_integ(1));
+    pnode_list_append(&list, pnode_make_integ(2));
+    pnode_list_append(&list, pnode_make_str("str", 3));
 
     char *text = pexpr_serialize(&list, NULL);
     puts(text);   /* [1 2 "str"] */
     free(text);
-    pnode_free(&list);
+    pnode_drop(&list);
 
-    struct pnode *parsed = pexpr_parse("[1 2 [4 5 \"str\"]]", 17);
-    printf("%zu top-level elements\n", pnode_list_len(parsed)); /* 3 */
-    pnode_delete(parsed);
+    struct pnode parsed = pexpr_parse("[1 2 [4 5 \"str\"]]", 17);
+    printf("%zu top-level elements\n", pnode_list_len(&parsed)); /* 3 */
+    pnode_drop(&parsed);
 
     return 0;
 }
@@ -66,9 +66,9 @@ int main(void) {
     }
 
     if (st == P_PARSER_SUCC) {
-        struct pnode *result = p_parser_get_result(&p);
-        printf("%zu top-level elements\n", pnode_list_len(result));
-        pnode_delete(result);
+        struct pnode result = p_parser_get_result(&p);
+        printf("%zu top-level elements\n", pnode_list_len(&result));
+        pnode_drop(&result);
     } else {
         fprintf(stderr, "parse error: %s\n", p_parser_errmsg(&p));
     }

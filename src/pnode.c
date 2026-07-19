@@ -3,21 +3,21 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct pnode pnode_new_integ(int64_t v) {
+struct pnode pnode_make_integ(int64_t v) {
     struct pnode node;
     node.type = PTYPE_INTEG;
     node.integ = v;
     return node;
 }
 
-struct pnode pnode_new_real(double v) {
+struct pnode pnode_make_real(double v) {
     struct pnode node;
     node.type = PTYPE_REAL;
     node.real = v;
     return node;
 }
 
-struct pnode pnode_new_str(const char *s, size_t len) {
+struct pnode pnode_make_str(const char *s, size_t len) {
     struct pnode node;
     node.type = PTYPE_STR;
 
@@ -35,11 +35,11 @@ struct pnode pnode_new_str(const char *s, size_t len) {
     return node;
 }
 
-struct pnode pnode_new_cstr(const char *s) {
-    return pnode_new_str(s, strlen(s));
+struct pnode pnode_make_cstr(const char *s) {
+    return pnode_make_str(s, strlen(s));
 }
 
-struct pnode pnode_new_list(void) {
+struct pnode pnode_make_list(void) {
     struct pnode node;
     node.type = PTYPE_LIST;
     node.list = NULL;
@@ -75,7 +75,7 @@ size_t pnode_list_len(const struct pnode *list) {
     return list->list_len;
 }
 
-void pnode_free(struct pnode *node) {
+void pnode_drop(struct pnode *node) {
     if (!node) return;
 
     switch (node->type) {
@@ -87,7 +87,7 @@ void pnode_free(struct pnode *node) {
         case PTYPE_LIST:
             if (node->list) {
                 for (size_t i = 0; i < node->list_len; i++) {
-                    pnode_free(&node->list[i]);
+                    pnode_drop(&node->list[i]);
                 }
             }
             free(node->list);
@@ -97,12 +97,6 @@ void pnode_free(struct pnode *node) {
         default:
             break;
     }
-}
-
-void pnode_delete(struct pnode *node) {
-    if (!node) return;
-    pnode_free(node);
-    free(node);
 }
 
 struct pnode pnode_copy(const struct pnode *node) {
@@ -143,7 +137,7 @@ struct pnode pnode_copy(const struct pnode *node) {
             for (i = 0; i < node->list_len; i++) {
                 arr[i] = pnode_copy(&node->list[i]);
                 if (!pnode_ok(&arr[i])) {
-                    for (size_t j = 0; j <= i; j++) pnode_free(&arr[j]);
+                    for (size_t j = 0; j <= i; j++) pnode_drop(&arr[j]);
                     free(arr);
                     copy.list = NULL;
                     copy.list_len = (size_t)-1;

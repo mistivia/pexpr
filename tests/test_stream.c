@@ -19,15 +19,13 @@ static void test_stream_byte_by_byte_list(void) {
     }
     CHECK(st == P_PARSER_SUCC);
 
-    struct pnode *n = p_parser_get_result(&p);
-    CHECK(n != NULL);
-    if (n) {
-        CHECK_EQ_LL(pnode_list_len(n), 3);
-        CHECK_EQ_LL(n->list[0].integ, 1);
-        CHECK_EQ_LL(n->list[1].integ, 2);
-        CHECK_EQ_LL(pnode_list_len(&n->list[2]), 3);
-        pnode_delete(n);
-    }
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n));
+    CHECK_EQ_LL(pnode_list_len(&n), 3);
+    CHECK_EQ_LL(n.list[0].integ, 1);
+    CHECK_EQ_LL(n.list[1].integ, 2);
+    CHECK_EQ_LL(pnode_list_len(&n.list[2]), 3);
+    pnode_drop(&n);
 
     p_parser_destroy(&p);
 }
@@ -40,10 +38,10 @@ static void test_stream_bare_number_needs_eof(void) {
     CHECK(p_parser_feed(&p, 1, "2") == P_PARSER_PAUSE);
     CHECK(p_parser_feed(&p, 0, NULL) == P_PARSER_SUCC);
 
-    struct pnode *n = p_parser_get_result(&p);
-    CHECK(n && n->type == PTYPE_INTEG);
-    if (n) CHECK_EQ_LL(n->integ, 42);
-    pnode_delete(n);
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_INTEG);
+    CHECK_EQ_LL(n.integ, 42);
+    pnode_drop(&n);
 
     p_parser_destroy(&p);
 }
@@ -58,10 +56,10 @@ static void test_stream_real_needs_eof(void) {
     }
     CHECK(p_parser_feed(&p, 0, NULL) == P_PARSER_SUCC);
 
-    struct pnode *n = p_parser_get_result(&p);
-    CHECK(n && n->type == PTYPE_REAL);
-    if (n) CHECK_EQ_DBL(n->real, 35.0);
-    pnode_delete(n);
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_REAL);
+    CHECK_EQ_DBL(n.real, 35.0);
+    pnode_drop(&n);
 
     p_parser_destroy(&p);
 }
@@ -71,18 +69,20 @@ static void test_stream_reuse(void) {
     CHECK_EQ_LL(p_parser_init(&p), 0);
 
     CHECK(p_parser_feed(&p, 5, "[1 2]") == P_PARSER_SUCC);
-    struct pnode *n1 = p_parser_get_result(&p);
-    CHECK(n1 && pnode_list_len(n1) == 2);
-    pnode_delete(n1);
+    struct pnode n1 = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n1) && pnode_list_len(&n1) == 2);
+    pnode_drop(&n1);
 
     CHECK(p_parser_feed(&p, 5, "[3 4]") == P_PARSER_SUCC);
-    struct pnode *n2 = p_parser_get_result(&p);
-    CHECK(n2 && pnode_list_len(n2) == 2);
-    if (n2) CHECK_EQ_LL(n2->list[0].integ, 3);
-    pnode_delete(n2);
+    struct pnode n2 = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n2) && pnode_list_len(&n2) == 2);
+    CHECK_EQ_LL(n2.list[0].integ, 3);
+    pnode_drop(&n2);
 
-    /* get_result() on an already-consumed success returns NULL. */
-    CHECK(p_parser_get_result(&p) == NULL);
+    /* get_result() on an already-consumed success returns a not-ok value. */
+    struct pnode none = p_parser_get_result(&p);
+    CHECK(!pnode_ok(&none));
+    pnode_drop(&none);
 
     p_parser_destroy(&p);
 }
@@ -94,7 +94,10 @@ static void test_stream_fail(void) {
     enum p_parser_state st = p_parser_feed(&p, 7, "garbage");
     CHECK(st == P_PARSER_FAIL);
     CHECK(strlen(p_parser_errmsg(&p)) > 0);
-    CHECK(p_parser_get_result(&p) == NULL);
+
+    struct pnode none = p_parser_get_result(&p);
+    CHECK(!pnode_ok(&none));
+    pnode_drop(&none);
 
     /* The terminal state persists across further feeds. */
     CHECK(p_parser_feed(&p, 1, "x") == P_PARSER_FAIL);
@@ -149,13 +152,11 @@ static void test_stream_chunked_escape(void) {
     }
     CHECK(st == P_PARSER_SUCC);
 
-    struct pnode *n = p_parser_get_result(&p);
-    CHECK(n && n->type == PTYPE_STR);
-    if (n) {
-        CHECK_EQ_LL(n->str_len, 3);
-        CHECK(memcmp(n->str, "aAb", 3) == 0);
-    }
-    pnode_delete(n);
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_STR);
+    CHECK_EQ_LL(n.str_len, 3);
+    CHECK(memcmp(n.str, "aAb", 3) == 0);
+    pnode_drop(&n);
 
     p_parser_destroy(&p);
 }
@@ -172,13 +173,11 @@ static void test_stream_chunked_utf8(void) {
     }
     CHECK(st == P_PARSER_SUCC);
 
-    struct pnode *n = p_parser_get_result(&p);
-    CHECK(n && n->type == PTYPE_STR);
-    if (n) {
-        CHECK_EQ_LL(n->str_len, 3);
-        CHECK(memcmp(n->str, full + 1, 3) == 0);
-    }
-    pnode_delete(n);
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_STR);
+    CHECK_EQ_LL(n.str_len, 3);
+    CHECK(memcmp(n.str, full + 1, 3) == 0);
+    pnode_drop(&n);
 
     p_parser_destroy(&p);
 }
@@ -191,10 +190,10 @@ static void test_stream_large_chunks(void) {
     CHECK_EQ_LL(p_parser_init(&p), 0);
 
     CHECK(p_parser_feed(&p, strlen(doc), doc) == P_PARSER_SUCC);
-    struct pnode *n = p_parser_get_result(&p);
-    CHECK(n != NULL);
-    if (n) CHECK_EQ_LL(pnode_list_len(n), 3);
-    pnode_delete(n);
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n));
+    CHECK_EQ_LL(pnode_list_len(&n), 3);
+    pnode_drop(&n);
 
     p_parser_destroy(&p);
 }

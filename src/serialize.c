@@ -66,7 +66,7 @@ static int emit_str(struct pbuf *out, const char *s, size_t len) {
 }
 
 static int emit_node(struct pbuf *out, const struct pnode *node) {
-    if (!node) return -1;
+    if (!node || !pnode_ok(node)) return -1;
 
     switch (node->type) {
         case PTYPE_INTEG:

@@ -86,28 +86,29 @@ details implicit; this is what the implementation does and why:
   paired with an explicit `size_t list_len` rather than a NULL terminator
   (a NULL terminator doesn't make sense for an array of values — there's
   no pointer to be NULL). The sketch's separate `void **mem` bookkeeping
-  field was dropped: since `pnode_free()` already switches on `type`, it
+  field was dropped: since `pnode_drop()` already switches on `type`, it
   can free what a node owns directly (the string buffer, or the `list`
   array itself) without a generic side table, and recurses into each
   element of `list` for children. See the doc comment on `struct pnode`
   in `include/pexpr.h`.
-- **`struct pnode` is a value type throughout the construction API.**
-  `pnode_new_integ()`/`pnode_new_real()`/`pnode_new_str()`/
-  `pnode_new_cstr()`/`pnode_new_list()`/`pnode_copy()` return `struct
-  pnode` directly rather than a heap-allocated pointer, and
+- **`struct pnode` is a value type across the entire public API,
+  including the parser.** `pnode_make_integ()`/`pnode_make_real()`/
+  `pnode_make_str()`/`pnode_make_cstr()`/`pnode_make_list()`/
+  `pnode_copy()`/`pexpr_parse()`/`p_parser_get_result()` all return
+  `struct pnode` directly rather than a heap-allocated pointer, and
   `pnode_list_append()`'s `child` parameter is a value too (moved into
   the list's array on success). This library never allocates the
-  `struct pnode` wrapper itself - only what a `PTYPE_STR`/`PTYPE_LIST`
-  value owns internally (a string's bytes, a list's child array) is
-  heap memory, and only those two constructors can fail. Since a
-  failure can no longer be signaled with a `NULL` return, it's signaled
-  in-band instead and checked with `pnode_ok()` (see `include/pexpr.h`);
-  `pnode_free()` correspondingly frees what a node owns but never the
-  node itself. The one place this library still hands back a
-  heap-allocated `struct pnode *` is at the parser's outer boundary
-  (`pexpr_parse()`, `p_parser_get_result()`), where there's no
-  caller-provided storage to write into - free those with
-  `pnode_delete()`, not `pnode_free()`.
+  `struct pnode` wrapper itself anywhere - only what a
+  `PTYPE_STR`/`PTYPE_LIST` value owns internally (a string's bytes, a
+  list's child array) is heap memory, and only the functions that touch
+  that memory can fail (`pnode_make_str()`/`pnode_make_cstr()`,
+  `pnode_copy()`, and the parser on a syntax error or internal
+  allocation failure). Since failure can no longer be signaled with a
+  `NULL` return, it's signaled in-band instead - a value for which
+  `pnode_ok()` is false - and checked with `pnode_ok()` (see
+  `include/pexpr.h`); `pnode_drop()` correspondingly frees what a node
+  owns but never the node itself, since this library never owns that
+  storage in the first place.
 - **End of input for the streaming parser.** A bare top-level scalar like
   `42` has no closing delimiter, so the parser cannot know it's complete
   until told there's nothing more coming. `p_parser_feed(self, 0, NULL)`
