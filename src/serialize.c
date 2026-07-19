@@ -77,9 +77,9 @@ static int emit_node(struct pbuf *out, const struct pnode *node) {
             return emit_str(out, node->str, node->str_len);
         case PTYPE_LIST: {
             if (pbuf_putc(out, '[') != 0) return -1;
-            for (size_t i = 0; node->list[i]; i++) {
+            for (size_t i = 0; i < node->list_len; i++) {
                 if (i > 0 && pbuf_putc(out, ' ') != 0) return -1;
-                if (emit_node(out, node->list[i]) != 0) return -1;
+                if (emit_node(out, &node->list[i]) != 0) return -1;
             }
             return pbuf_putc(out, ']');
         }

@@ -23,9 +23,9 @@ static void test_stream_byte_by_byte_list(void) {
     CHECK(n != NULL);
     if (n) {
         CHECK_EQ_LL(pnode_list_len(n), 3);
-        CHECK_EQ_LL(n->list[0]->integ, 1);
-        CHECK_EQ_LL(n->list[1]->integ, 2);
-        CHECK_EQ_LL(pnode_list_len(n->list[2]), 3);
+        CHECK_EQ_LL(n->list[0].integ, 1);
+        CHECK_EQ_LL(n->list[1].integ, 2);
+        CHECK_EQ_LL(pnode_list_len(&n->list[2]), 3);
         pnode_free(n);
     }
 
@@ -78,7 +78,7 @@ static void test_stream_reuse(void) {
     CHECK(p_parser_feed(&p, 5, "[3 4]") == P_PARSER_SUCC);
     struct pnode *n2 = p_parser_get_result(&p);
     CHECK(n2 && pnode_list_len(n2) == 2);
-    if (n2) CHECK_EQ_LL(n2->list[0]->integ, 3);
+    if (n2) CHECK_EQ_LL(n2->list[0].integ, 3);
     pnode_free(n2);
 
     /* get_result() on an already-consumed success returns NULL. */

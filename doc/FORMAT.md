@@ -81,13 +81,16 @@ and a following `]`).
 The original design (see `DESIGN` in the repository history) left a few
 details implicit; this is what the implementation does and why:
 
-- **`struct pnode`'s `list` field** is a NULL-terminated array of
-  *pointers* (`struct pnode **list`), not the bare `struct pnode *`
-  written in the sketch — a NULL terminator only makes sense for a
-  pointer array. The sketch's separate `void **mem` bookkeeping field was
-  dropped: since `pnode_free()` already switches on `type`, it can free
-  what a node owns directly (the string buffer, or the `list` array
-  itself) without a generic side table, and recurses into `list` for
+- **`struct pnode`'s `list` field** is `struct pnode *list`, matching the
+  sketch literally: a contiguous array of child *values* (not pointers),
+  paired with an explicit `size_t list_len` rather than a NULL terminator
+  (a NULL terminator doesn't make sense for an array of values — there's
+  no pointer to be NULL). `pnode_list_append()` moves a child's contents
+  into this array and frees the child's now-empty shell. The sketch's
+  separate `void **mem` bookkeeping field was dropped: since
+  `pnode_free()` already switches on `type`, it can free what a node owns
+  directly (the string buffer, or the `list` array itself) without a
+  generic side table, and recurses into each element of `list` for
   children. See the doc comment on `struct pnode` in `include/pexpr.h`.
 - **End of input for the streaming parser.** A bare top-level scalar like
   `42` has no closing delimiter, so the parser cannot know it's complete

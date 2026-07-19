@@ -27,10 +27,11 @@ enum ptype {
 };
 
 /*
- * A pexpr value. `list` is a NULL-terminated array of owned child
- * pointers. pnode_free() switches on `type` to release what a node owns
- * directly (the string buffer, or the `list` array itself) and recurses
- * into `list` to release children.
+ * A pexpr value. `list` is a contiguous array of `list_len` child values
+ * (not pointers) owned directly by this node; pnode_free() switches on
+ * `type` to release what a node owns directly (the string buffer, or the
+ * `list` array itself) and recurses into each element of `list` to
+ * release its owned memory in turn.
  */
 struct pnode {
     enum ptype type;
@@ -41,7 +42,10 @@ struct pnode {
             size_t str_len;
             const char *str; /* always NUL-terminated in addition to str_len */
         };
-        struct pnode **list; /* NULL-terminated */
+        struct {
+            size_t list_len;
+            struct pnode *list; /* array of list_len elements, by value; NULL iff list_len == 0 */
+        };
     };
 };
 
@@ -52,10 +56,14 @@ struct pnode *pnode_new_str(const char *s, size_t len); /* copies s */
 struct pnode *pnode_new_cstr(const char *s); /* copies s; len = strlen(s) */
 struct pnode *pnode_new_list(void); /* starts empty */
 
-/* Appends `child` to `list` (must be PTYPE_LIST). Takes ownership of
- * `child` on success. Returns 0 on success, -1 on error (bad args or
- * allocation failure; `child` is left untouched on failure so the caller
- * still owns it). */
+/*
+ * Appends `child` to `list` (must be PTYPE_LIST) by moving its contents
+ * into `list`'s array and freeing `child`'s now-empty shell - `child` is
+ * consumed on success and must not be read, freed, or appended again
+ * afterward. Returns 0 on success, -1 on error (bad args or allocation
+ * failure; on failure `child` is left completely untouched, still owned
+ * by the caller).
+ */
 int pnode_list_append(struct pnode *list, struct pnode *child);
 
 /* Number of children in a PTYPE_LIST node. */

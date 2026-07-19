@@ -57,17 +57,19 @@ static void test_list_build(void) {
     CHECK(list != NULL);
     CHECK(list->type == PTYPE_LIST);
     CHECK_EQ_LL(pnode_list_len(list), 0);
-    CHECK(list->list[0] == NULL);
+    CHECK(list->list == NULL);
 
+    /* pnode_list_append() moves each child's contents into list->list and
+     * frees the child's shell - list->list[i] is a struct pnode *value*,
+     * not the pointer that was passed in. */
     CHECK_EQ_LL(pnode_list_append(list, pnode_new_integ(1)), 0);
     CHECK_EQ_LL(pnode_list_append(list, pnode_new_integ(2)), 0);
     CHECK_EQ_LL(pnode_list_append(list, pnode_new_str("x", 1)), 0);
 
     CHECK_EQ_LL(pnode_list_len(list), 3);
-    CHECK_EQ_LL(list->list[0]->integ, 1);
-    CHECK_EQ_LL(list->list[1]->integ, 2);
-    CHECK(list->list[2]->type == PTYPE_STR);
-    CHECK(list->list[3] == NULL);
+    CHECK_EQ_LL(list->list[0].integ, 1);
+    CHECK_EQ_LL(list->list[1].integ, 2);
+    CHECK(list->list[2].type == PTYPE_STR);
 
     pnode_free(list);
 }
@@ -80,8 +82,8 @@ static void test_list_nested(void) {
     CHECK_EQ_LL(pnode_list_append(outer, inner), 0);
 
     CHECK_EQ_LL(pnode_list_len(outer), 2);
-    CHECK_EQ_LL(pnode_list_len(outer->list[1]), 1);
-    CHECK_EQ_LL(outer->list[1]->list[0]->integ, 9);
+    CHECK_EQ_LL(pnode_list_len(&outer->list[1]), 1);
+    CHECK_EQ_LL(outer->list[1].list[0].integ, 9);
 
     pnode_free(outer);
 }
@@ -94,7 +96,7 @@ static void test_list_append_many(void) {
     }
     CHECK_EQ_LL(pnode_list_len(list), 200);
     for (int i = 0; i < 200; i++) {
-        CHECK_EQ_LL(list->list[i]->integ, i);
+        CHECK_EQ_LL(list->list[i].integ, i);
     }
     pnode_free(list);
 }
@@ -145,22 +147,23 @@ static void test_copy_list_is_deep(void) {
 
     struct pnode *copy = pnode_copy(outer);
     CHECK(copy != NULL && copy != outer);
-    CHECK(copy->list != outer->list);
     CHECK_EQ_LL(pnode_list_len(copy), 2);
 
-    /* Every descendant, at every depth, must be a distinct allocation. */
-    CHECK(copy->list[0] != outer->list[0]);
-    CHECK(copy->list[1] != outer->list[1]);
-    CHECK(copy->list[1]->list[0] != outer->list[1]->list[0]);
-    CHECK(copy->list[1]->list[1] != outer->list[1]->list[1]);
-    CHECK(copy->list[1]->list[1]->str != outer->list[1]->list[1]->str);
+    /* The backing arrays, at every depth, must be distinct allocations -
+     * that's what makes this a deep copy rather than a shallow memcpy of
+     * pointers. (Comparing &copy->list[i] to &outer->list[i] wouldn't be
+     * meaningful: those are always different addresses just because the
+     * two top-level arrays are different allocations.) */
+    CHECK(copy->list != outer->list);
+    CHECK(copy->list[1].list != outer->list[1].list);
+    CHECK(copy->list[1].list[1].str != outer->list[1].list[1].str);
 
     /* Freeing the original must leave the whole copy intact. */
     pnode_free(outer);
     CHECK_EQ_LL(pnode_list_len(copy), 2);
-    CHECK_EQ_LL(copy->list[0]->integ, 1);
-    CHECK_EQ_LL(copy->list[1]->list[0]->integ, 9);
-    CHECK(memcmp(copy->list[1]->list[1]->str, "x", 1) == 0);
+    CHECK_EQ_LL(copy->list[0].integ, 1);
+    CHECK_EQ_LL(copy->list[1].list[0].integ, 9);
+    CHECK(memcmp(copy->list[1].list[1].str, "x", 1) == 0);
 
     pnode_free(copy);
 }

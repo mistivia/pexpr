@@ -96,13 +96,13 @@ static void test_parse_list_example_from_design(void) {
     struct pnode *n = parse("[1 2 [4 5 \"str\"]]");
     CHECK(n && n->type == PTYPE_LIST);
     CHECK_EQ_LL(pnode_list_len(n), 3);
-    CHECK_EQ_LL(n->list[0]->integ, 1);
-    CHECK_EQ_LL(n->list[1]->integ, 2);
-    CHECK(n->list[2]->type == PTYPE_LIST);
-    CHECK_EQ_LL(pnode_list_len(n->list[2]), 3);
-    CHECK_EQ_LL(n->list[2]->list[0]->integ, 4);
-    CHECK_EQ_LL(n->list[2]->list[1]->integ, 5);
-    CHECK(memcmp(n->list[2]->list[2]->str, "str", 3) == 0);
+    CHECK_EQ_LL(n->list[0].integ, 1);
+    CHECK_EQ_LL(n->list[1].integ, 2);
+    CHECK(n->list[2].type == PTYPE_LIST);
+    CHECK_EQ_LL(pnode_list_len(&n->list[2]), 3);
+    CHECK_EQ_LL(n->list[2].list[0].integ, 4);
+    CHECK_EQ_LL(n->list[2].list[1].integ, 5);
+    CHECK(memcmp(n->list[2].list[2].str, "str", 3) == 0);
     pnode_free(n);
 }
 
@@ -111,7 +111,7 @@ static void test_parse_list_lenient_separators(void) {
     CHECK(n && n->type == PTYPE_LIST);
     CHECK_EQ_LL(pnode_list_len(n), 5);
     for (int i = 0; i < 5; i++) {
-        CHECK_EQ_LL(n->list[i]->integ, i + 1);
+        CHECK_EQ_LL(n->list[i].integ, i + 1);
     }
     pnode_free(n);
 

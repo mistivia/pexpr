@@ -14,20 +14,24 @@ struct pnode {
         int64_t integ;
         double real;
         struct { size_t str_len; const char *str; };
-        struct pnode **list; /* NULL-terminated */
+        struct { size_t list_len; struct pnode *list; }; /* array, by value */
     };
 };
 ```
 
 `str` is always NUL-terminated in addition to tracking `str_len`
 explicitly (the format allows embedded NULs, hence `str_len`). `list` is a
-NULL-terminated array of owned child pointers — walk it with a plain
-`for (size_t i = 0; node->list[i]; i++)` loop, or use `pnode_list_len()`.
+contiguous array of `list_len` **values** (not pointers) owned directly by
+the node — walk it with `for (size_t i = 0; i < node->list_len; i++)`, or
+use `pnode_list_len()`. Because elements are values, `node->list[i]` is a
+`struct pnode`; take its address (`&node->list[i]`) where a
+`const struct pnode *` is expected, e.g. passing an element to
+`pnode_list_len()` or `pexpr_serialize()`.
 
 `pnode_free()` switches on `type` to release what a node owns directly
 (the string buffer for `PTYPE_STR`, the `list` array itself for
-`PTYPE_LIST`) and recurses into `list` to free children. Scalars
-(`PTYPE_INTEG` / `PTYPE_REAL`) own nothing extra.
+`PTYPE_LIST`) and recurses into each element of `list` to free what *it*
+owns in turn. Scalars (`PTYPE_INTEG` / `PTYPE_REAL`) own nothing extra.
 
 ### Building values
 
@@ -39,18 +43,21 @@ struct pnode *s2 = pnode_new_cstr("hi");         /* same, len = strlen(s) */
 struct pnode *list = pnode_new_list();            /* starts empty */
 pnode_list_append(list, pnode_new_integ(1));
 pnode_list_append(list, pnode_new_integ(2));
-pnode_list_append(list, s);                        /* list now owns s */
+pnode_list_append(list, s);                        /* moved into list; don't touch s again */
 
 size_t n_children = pnode_list_len(list);          /* 3 */
+int64_t second = list->list[1].integ;              /* 2 */
 
 pnode_free(list);                                   /* frees everything */
 pnode_free(n);
 pnode_free(s2);
 ```
 
-`pnode_list_append()` takes ownership of the child *only on success*; on
-failure (`-1`, wrong node type or allocation failure) the child is
-untouched and still yours to free.
+`pnode_list_append()` **moves** `child`'s contents into the list's array
+and frees `child`'s now-empty shell — on success, `child` is consumed:
+don't read it, free it, or append it again afterward (that's why the
+snippet above doesn't `pnode_free(s)`). On failure (`-1`) `child` is left
+completely untouched and is still yours to free, same as before.
 
 ### Copying
 
