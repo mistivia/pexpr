@@ -1,0 +1,14 @@
+/build/
+*.o
+*.obj
+*.gcno
+*.gcda
+*.gcov
+*.info
+coverage/
+*.dSYM/
+*.exe
+compile_commands.json
+.cache/
+TASK
+DESIGN
