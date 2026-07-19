@@ -30,9 +30,13 @@ struct p_parser_impl {
     size_t in_pos;
     int eof;
 
-    /* Set by the coroutine entry point when it finishes. */
+    /* Set by the coroutine entry point when it finishes. `result` is a
+     * value, not a pointer: struct pnode is no longer separately
+     * heap-allocated by the pnode_new_*() family, so it's stored here
+     * directly and only wrapped in a single malloc'd shell at the very
+     * end, in p_parser_get_result(), for callers that want a pointer. */
     int parse_ok;
-    struct pnode *result;
+    struct pnode result;
 
     /*
      * If p_parser_destroy() is called while the coroutine is suspended
@@ -40,18 +44,24 @@ struct p_parser_impl {
      * variables on it (partially built pnode trees, in-progress string/
      * number scratch buffers) are never unwound, so whatever they own
      * would otherwise leak. These two fields let the parser register its
-     * in-flight heap allocations so destroy() can still free them:
+     * in-flight allocations so destroy() can still free them:
      *
-     * - `open_lists` holds every PTYPE_LIST node currently under
-     *   construction (one push per active parse_list() stack frame,
-     *   popped right before that frame returns via any path). A node
-     *   only becomes reachable from its parent's `list` array *after*
-     *   its own parse_list() call returns, so at any given yield point
-     *   these nodes are not yet linked to each other and can simply be
-     *   pnode_free()'d independently.
+     * - `open_lists` holds the address of every PTYPE_LIST value
+     *   currently under construction (one push per active parse_list()
+     *   stack frame, popped right before that frame returns via any
+     *   path). These addresses point *into the coroutine's own stack*
+     *   (a local variable in a suspended call frame) - valid to read
+     *   right up until mco_destroy() deallocates that stack, which is
+     *   why reclaim_in_flight() must run before it. A node only becomes
+     *   reachable from its parent's `list` array *after* its own
+     *   parse_list() call returns, so at any given yield point these
+     *   nodes are not yet linked to each other and pnode_free() (which
+     *   only ever touches what a node *owns*, never the node's own
+     *   storage) can be called on each independently.
      * - `active_buf` points at the single struct pbuf (if any) currently
-     *   accumulating a string or number token. Only one can be active at
-     *   a time, since collecting a token never recurses.
+     *   accumulating a string or number token - also coroutine-stack
+     *   memory. Only one can be active at a time, since collecting a
+     *   token never recurses.
      */
     struct pnode **open_lists;
     size_t open_lists_len;
@@ -156,7 +166,11 @@ static int hex_val(unsigned char c) {
     return -1;
 }
 
-static int parse_value(struct parse_ctx *ctx, struct pnode **out);
+/* Every parse_*() function below fills `*out` (caller-owned storage,
+ * typically a local variable somewhere on the coroutine's stack) and
+ * returns 1 on success, or returns 0 and leaves `*out` untouched on
+ * failure. */
+static int parse_value(struct parse_ctx *ctx, struct pnode *out);
 
 /* Clears the active-scratch-buffer registration, frees it, and fails.
  * Centralizes the bookkeeping every error exit from parse_string() and
@@ -167,7 +181,7 @@ static int buf_fail(struct p_parser_impl *p, struct pbuf *buf, const char *msg) 
     return fail(p, msg);
 }
 
-static int parse_string(struct p_parser_impl *p, struct pnode **out) {
+static int parse_string(struct p_parser_impl *p, struct pnode *out) {
     unsigned char c;
     if (!pk_getc(p, &c) || c != '"') return fail(p, "expected '\"'");
 
@@ -225,9 +239,9 @@ static int parse_string(struct p_parser_impl *p, struct pnode **out) {
     p->active_buf = NULL;
     if (!s) return fail(p, "out of memory");
 
-    struct pnode *node = pnode_new_str(s, len);
+    struct pnode node = pnode_new_str(s, len);
     free(s);
-    if (!node) return fail(p, "out of memory");
+    if (!pnode_ok(&node)) return fail(p, "out of memory");
 
     *out = node;
     return 1;
@@ -238,7 +252,7 @@ static int is_num_char(unsigned char c) {
            c == '+' || c == '-';
 }
 
-static int parse_number(struct p_parser_impl *p, struct pnode **out) {
+static int parse_number(struct p_parser_impl *p, struct pnode *out) {
     struct pbuf buf;
     pbuf_init(&buf);
     p->active_buf = &buf;
@@ -267,7 +281,6 @@ static int parse_number(struct p_parser_impl *p, struct pnode **out) {
         }
     }
 
-    struct pnode *node;
     char *end = NULL;
     errno = 0;
     if (is_float) {
@@ -276,23 +289,20 @@ static int parse_number(struct p_parser_impl *p, struct pnode **out) {
             free(tok);
             return fail(p, "invalid number literal");
         }
-        node = pnode_new_real(v);
+        *out = pnode_new_real(v);
     } else {
         long long v = strtoll(tok, &end, 10);
         if (end != tok + len || errno == ERANGE) {
             free(tok);
             return fail(p, "invalid number literal");
         }
-        node = pnode_new_integ((int64_t)v);
+        *out = pnode_new_integ((int64_t)v);
     }
     free(tok);
-    if (!node) return fail(p, "out of memory");
-
-    *out = node;
-    return 1;
+    return 1; /* pnode_new_integ()/pnode_new_real() never fail */
 }
 
-static int parse_list(struct parse_ctx *ctx, struct pnode **out) {
+static int parse_list(struct parse_ctx *ctx, struct pnode *out) {
     struct p_parser_impl *p = ctx->p;
     unsigned char c;
     if (!pk_getc(p, &c) || c != '[') return fail(p, "expected '['");
@@ -303,13 +313,8 @@ static int parse_list(struct parse_ctx *ctx, struct pnode **out) {
         return fail(p, "list nesting too deep");
     }
 
-    struct pnode *list = pnode_new_list();
-    if (!list) {
-        ctx->depth--;
-        return fail(p, "out of memory");
-    }
-    if (push_open_list(p, list) != 0) {
-        pnode_free(list);
+    struct pnode list = pnode_new_list(); /* cannot fail */
+    if (push_open_list(p, &list) != 0) {
         ctx->depth--;
         return fail(p, "out of memory");
     }
@@ -318,7 +323,7 @@ static int parse_list(struct parse_ctx *ctx, struct pnode **out) {
         skip_ws(p);
         if (!pk_peek(p, &c)) {
             pop_open_list(p);
-            pnode_free(list);
+            pnode_free(&list);
             ctx->depth--;
             return fail(p, "unterminated list");
         }
@@ -327,17 +332,17 @@ static int parse_list(struct parse_ctx *ctx, struct pnode **out) {
             break;
         }
 
-        struct pnode *child;
+        struct pnode child;
         if (!parse_value(ctx, &child)) {
             pop_open_list(p);
-            pnode_free(list);
+            pnode_free(&list);
             ctx->depth--;
             return 0;
         }
-        if (pnode_list_append(list, child) != 0) {
-            pnode_free(child);
+        if (pnode_list_append(&list, child) != 0) {
+            pnode_free(&child);
             pop_open_list(p);
-            pnode_free(list);
+            pnode_free(&list);
             ctx->depth--;
             return fail(p, "out of memory");
         }
@@ -349,7 +354,7 @@ static int parse_list(struct parse_ctx *ctx, struct pnode **out) {
     return 1;
 }
 
-static int parse_value(struct parse_ctx *ctx, struct pnode **out) {
+static int parse_value(struct parse_ctx *ctx, struct pnode *out) {
     struct p_parser_impl *p = ctx->p;
     skip_ws(p);
 
@@ -368,11 +373,7 @@ static void parser_entry(mco_coro *co) {
     ctx.p = p;
     ctx.depth = 0;
 
-    struct pnode *result = NULL;
-    int ok = parse_value(&ctx, &result);
-
-    p->parse_ok = ok;
-    p->result = ok ? result : NULL;
+    p->parse_ok = parse_value(&ctx, &p->result);
 }
 
 /* ------------------------------------------------------------------ *
@@ -439,8 +440,19 @@ struct pnode *p_parser_get_result(struct p_parser *self) {
 
     if (p->state != P_PARSER_SUCC) return NULL;
 
-    struct pnode *result = p->result;
-    p->result = NULL;
+    /* Wrap the value in a single heap shell for the caller; p_parser_*()
+     * itself has no more use for a heap pointer since struct pnode is a
+     * value now. */
+    struct pnode *result = malloc(sizeof *result);
+    if (!result) {
+        pnode_free(&p->result);
+        p->result = pnode_new_integ(0);
+        p->state = P_PARSER_FAIL;
+        snprintf(p->errmsg, sizeof p->errmsg, "out of memory returning result");
+        return NULL;
+    }
+    *result = p->result;
+    p->result = pnode_new_integ(0); /* ownership moved to `result`; leave a safe, empty value behind */
 
     mco_destroy(p->co);
     p->co = NULL;
@@ -477,9 +489,9 @@ void p_parser_destroy(struct p_parser *self) {
      * pointers being reclaimed here point into the coroutine's own
      * stack, which mco_destroy() deallocates. */
     reclaim_in_flight(p);
+    pnode_free(&p->result);
 
     if (p->co) mco_destroy(p->co);
-    if (p->result) pnode_free(p->result);
     free(p);
     self->impl = NULL;
 }

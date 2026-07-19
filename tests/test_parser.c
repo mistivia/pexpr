@@ -14,22 +14,22 @@ static void test_parse_integers(void) {
     n = parse("0");
     CHECK(n && n->type == PTYPE_INTEG);
     CHECK_EQ_LL(n->integ, 0);
-    pnode_free(n);
+    pnode_delete(n);
 
     n = parse("42");
     CHECK(n && n->type == PTYPE_INTEG);
     CHECK_EQ_LL(n->integ, 42);
-    pnode_free(n);
+    pnode_delete(n);
 
     n = parse("-42");
     CHECK(n && n->type == PTYPE_INTEG);
     CHECK_EQ_LL(n->integ, -42);
-    pnode_free(n);
+    pnode_delete(n);
 
     n = parse("+7");
     CHECK(n && n->type == PTYPE_INTEG);
     CHECK_EQ_LL(n->integ, 7);
-    pnode_free(n);
+    pnode_delete(n);
 }
 
 static void test_parse_reals(void) {
@@ -38,22 +38,22 @@ static void test_parse_reals(void) {
     n = parse("1.5");
     CHECK(n && n->type == PTYPE_REAL);
     CHECK_EQ_DBL(n->real, 1.5);
-    pnode_free(n);
+    pnode_delete(n);
 
     n = parse("1e10");
     CHECK(n && n->type == PTYPE_REAL);
     CHECK_EQ_DBL(n->real, 1e10);
-    pnode_free(n);
+    pnode_delete(n);
 
     n = parse("-2.5E-3");
     CHECK(n && n->type == PTYPE_REAL);
     CHECK_EQ_DBL(n->real, -2.5E-3);
-    pnode_free(n);
+    pnode_delete(n);
 
     /* No '.' or 'e' -> integer, per DESIGN's lenient number rule. */
     n = parse("100");
     CHECK(n && n->type == PTYPE_INTEG);
-    pnode_free(n);
+    pnode_delete(n);
 }
 
 static void test_parse_strings(void) {
@@ -63,20 +63,20 @@ static void test_parse_strings(void) {
     CHECK(n && n->type == PTYPE_STR);
     CHECK_EQ_LL(n->str_len, 5);
     CHECK(memcmp(n->str, "hello", 5) == 0);
-    pnode_free(n);
+    pnode_delete(n);
 
     n = parse("\"\\0\\\\\\a\\b\\t\\n\\v\\f\\r\\\"\"");
     CHECK(n && n->type == PTYPE_STR);
     CHECK_EQ_LL(n->str_len, 10);
     CHECK(memcmp(n->str, "\0\\\a\b\t\n\v\f\r\"", 10) == 0);
-    pnode_free(n);
+    pnode_delete(n);
 
     /* Lowercase and uppercase hex digits both accepted when parsing. */
     n = parse("\"\\x41\\x4A\"");
     CHECK(n && n->type == PTYPE_STR);
     CHECK_EQ_LL(n->str_len, 2);
     CHECK(memcmp(n->str, "AJ", 2) == 0);
-    pnode_free(n);
+    pnode_delete(n);
 
     /* Lenient: raw multi-line, raw UTF-8 bytes need no escaping. */
     const char raw[] = "\"line1\nline2\xc3\xa9\"";
@@ -84,12 +84,12 @@ static void test_parse_strings(void) {
     CHECK(n && n->type == PTYPE_STR);
     CHECK_EQ_LL(n->str_len, 13);
     CHECK(memcmp(n->str, "line1\nline2\xc3\xa9", 13) == 0);
-    pnode_free(n);
+    pnode_delete(n);
 
     n = parse("\"\"");
     CHECK(n && n->type == PTYPE_STR);
     CHECK_EQ_LL(n->str_len, 0);
-    pnode_free(n);
+    pnode_delete(n);
 }
 
 static void test_parse_list_example_from_design(void) {
@@ -103,7 +103,7 @@ static void test_parse_list_example_from_design(void) {
     CHECK_EQ_LL(n->list[2].list[0].integ, 4);
     CHECK_EQ_LL(n->list[2].list[1].integ, 5);
     CHECK(memcmp(n->list[2].list[2].str, "str", 3) == 0);
-    pnode_free(n);
+    pnode_delete(n);
 }
 
 static void test_parse_list_lenient_separators(void) {
@@ -113,16 +113,16 @@ static void test_parse_list_lenient_separators(void) {
     for (int i = 0; i < 5; i++) {
         CHECK_EQ_LL(n->list[i].integ, i + 1);
     }
-    pnode_free(n);
+    pnode_delete(n);
 
     n = parse("[   ]");
     CHECK(n && n->type == PTYPE_LIST);
     CHECK_EQ_LL(pnode_list_len(n), 0);
-    pnode_free(n);
+    pnode_delete(n);
 
     n = parse("  [1]  ");
     CHECK(n && n->type == PTYPE_LIST);
-    pnode_free(n);
+    pnode_delete(n);
 }
 
 static void test_parse_errors(void) {
@@ -150,7 +150,7 @@ static void test_parse_deep_nesting(void) {
 
     struct pnode *n = pexpr_parse(buf, pos);
     CHECK(n != NULL);
-    pnode_free(n);
+    pnode_delete(n);
 
     /* Well past the depth guard: must fail cleanly, not crash. */
     char *deep = malloc(2000);
@@ -188,8 +188,8 @@ static void test_round_trip(void) {
 
         free(s1);
         free(s2);
-        pnode_free(n1);
-        pnode_free(n2);
+        pnode_delete(n1);
+        pnode_delete(n2);
     }
 }
 

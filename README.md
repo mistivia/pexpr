@@ -24,19 +24,19 @@ See [`doc/FORMAT.md`](doc/FORMAT.md) for the format spec and
 #include <stdio.h>
 
 int main(void) {
-    struct pnode *list = pnode_new_list();
-    pnode_list_append(list, pnode_new_integ(1));
-    pnode_list_append(list, pnode_new_integ(2));
-    pnode_list_append(list, pnode_new_str("str", 3));
+    struct pnode list = pnode_new_list();
+    pnode_list_append(&list, pnode_new_integ(1));
+    pnode_list_append(&list, pnode_new_integ(2));
+    pnode_list_append(&list, pnode_new_str("str", 3));
 
-    char *text = pexpr_serialize(list, NULL);
+    char *text = pexpr_serialize(&list, NULL);
     puts(text);   /* [1 2 "str"] */
     free(text);
-    pnode_free(list);
+    pnode_free(&list);
 
     struct pnode *parsed = pexpr_parse("[1 2 [4 5 \"str\"]]", 17);
     printf("%zu top-level elements\n", pnode_list_len(parsed)); /* 3 */
-    pnode_free(parsed);
+    pnode_delete(parsed);
 
     return 0;
 }
@@ -68,7 +68,7 @@ int main(void) {
     if (st == P_PARSER_SUCC) {
         struct pnode *result = p_parser_get_result(&p);
         printf("%zu top-level elements\n", pnode_list_len(result));
-        pnode_free(result);
+        pnode_delete(result);
     } else {
         fprintf(stderr, "parse error: %s\n", p_parser_errmsg(&p));
     }
@@ -113,7 +113,7 @@ make check      # all of the above
 All four run the same test suite (`tests/`) against a differently
 instrumented build; `make coverage` additionally writes an HTML coverage
 report and prints a summary. As of this writing the suite passes clean
-under all three sanitizers, with ~92% line coverage on `src/` (the
+under all three sanitizers, with ~90% line coverage on `src/` (the
 remainder is out-of-memory defensive branches, which would need a fault
 injection harness to exercise — see `doc/FORMAT.md`'s design notes for
 what's covered by test intent vs. left as documented gaps).
