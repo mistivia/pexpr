@@ -12,14 +12,6 @@
  * against unbounded recursion on adversarial input. */
 #define PEXPR_MAX_DEPTH 256
 
-/* Explicit coroutine stack size (bytes). The recursive-descent parser uses
- * two native stack frames per nesting level, and sanitizer instrumentation
- * (ASan/MSan redzones, TSan shadow bookkeeping) can inflate frame size well
- * beyond an optimized build's. minicoro's own default (56KB) is not enough
- * headroom for PEXPR_MAX_DEPTH under those builds, so use a size comparable
- * to a typical thread stack instead. */
-#define PEXPR_STACK_SIZE (8 * 1024 * 1024)
-
 struct p_parser_impl {
     mco_coro *co;
     enum p_parser_state state;
@@ -191,10 +183,10 @@ static int buf_fail(struct p_parser_impl *p, struct pbuf *buf, const char *msg) 
 }
 
 static int parse_string(struct p_parser_impl *p, struct pnode *out) {
-    unsigned char c;
+    unsigned char c = {0};
     if (!pk_getc(p, &c) || c != '"') return fail(p, "expected '\"'");
 
-    struct pbuf buf;
+    struct pbuf buf = {0};
     pbuf_init(&buf);
     p->active_buf = &buf;
 
@@ -262,7 +254,7 @@ static int is_num_char(unsigned char c) {
 }
 
 static int parse_number(struct p_parser_impl *p, struct pnode *out) {
-    struct pbuf buf;
+    struct pbuf buf = {0};
     pbuf_init(&buf);
     p->active_buf = &buf;
 
@@ -313,7 +305,7 @@ static int parse_number(struct p_parser_impl *p, struct pnode *out) {
 
 static int parse_list(struct parse_ctx *ctx, struct pnode *out) {
     struct p_parser_impl *p = ctx->p;
-    unsigned char c;
+    unsigned char c = {0};
     if (!pk_getc(p, &c) || c != '[') return fail(p, "expected '['");
 
     ctx->depth++;
@@ -378,7 +370,7 @@ static int parse_value(struct parse_ctx *ctx, struct pnode *out) {
 
 static void parser_entry(mco_coro *co) {
     struct p_parser_impl *p = (struct p_parser_impl *)mco_get_user_data(co);
-    struct parse_ctx ctx;
+    struct parse_ctx ctx = {0};
     ctx.p = p;
     ctx.depth = 0;
 
@@ -390,7 +382,7 @@ static void parser_entry(mco_coro *co) {
  * ------------------------------------------------------------------ */
 
 static mco_result start_coroutine(struct p_parser_impl *p) {
-    mco_desc desc = mco_desc_init(parser_entry, PEXPR_STACK_SIZE);
+    mco_desc desc = mco_desc_init(parser_entry, 0);
     desc.user_data = p;
     return mco_create(&p->co, &desc);
 }
