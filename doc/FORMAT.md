@@ -76,21 +76,11 @@ ever emits single ASCII spaces; the decoder accepts the wider whitespace
 set and multiple/mixed occurrences of it, including none between a value
 and a following `]`).
 
-## Design notes / deviations from the original spec
+## Design notes
 
 The original design (see `DESIGN` in the repository history) left a few
 details implicit; this is what the implementation does and why:
 
-- **`struct pnode`'s `list` field** is `struct pnode *list`, matching the
-  sketch literally: a contiguous array of child *values* (not pointers),
-  paired with an explicit `size_t list_len` rather than a NULL terminator
-  (a NULL terminator doesn't make sense for an array of values — there's
-  no pointer to be NULL). The sketch's separate `void **mem` bookkeeping
-  field was dropped: since `pnode_drop()` already switches on `type`, it
-  can free what a node owns directly (the string buffer, or the `list`
-  array itself) without a generic side table, and recurses into each
-  element of `list` for children. See the doc comment on `struct pnode`
-  in `include/pexpr.h`.
 - **`struct pnode` is a value type across the entire public API,
   including the parser.** `pnode_make_integ()`/`pnode_make_real()`/
   `pnode_make_str()`/`pnode_make_cstr()`/`pnode_make_list()`/
