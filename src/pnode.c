@@ -44,6 +44,7 @@ struct pnode pnode_make_list(void) {
     node.type = PTYPE_LIST;
     node.list = NULL;
     node.list_len = 0;
+    node.list_cap = 0;
     return node;
 }
 
@@ -52,7 +53,7 @@ int pnode_ok(const struct pnode *node) {
         case PTYPE_STR:
             return node->str != NULL;
         case PTYPE_LIST:
-            return node->list != NULL || node->list_len == 0;
+            return (node->list != NULL || node->list_len == 0) && node->list_len <= node->list_cap;
         default:
             return 1;
     }
@@ -61,11 +62,16 @@ int pnode_ok(const struct pnode *node) {
 int pnode_list_append(struct pnode *list, struct pnode child) {
     if (!list || list->type != PTYPE_LIST) return -1;
 
-    struct pnode *new_arr = realloc(list->list, (list->list_len + 1) * sizeof *new_arr);
-    if (!new_arr) return -1;
+    if (list->list_len == list->list_cap) {
+        /* Need to grow. Capacity starts at 0 and doubles on each realloc. */
+        size_t new_cap = list->list_cap ? list->list_cap * 2 : 1;
+        struct pnode *new_arr = realloc(list->list, new_cap * sizeof *new_arr);
+        if (!new_arr) return -1;
+        list->list = new_arr;
+        list->list_cap = new_cap;
+    }
 
-    new_arr[list->list_len] = child; /* move child's contents into the array */
-    list->list = new_arr;
+    list->list[list->list_len] = child; /* move child's contents into the array */
     list->list_len++;
     return 0;
 }
@@ -93,6 +99,7 @@ void pnode_drop(struct pnode *node) {
             free(node->list);
             node->list = NULL;
             node->list_len = 0;
+            node->list_cap = 0;
             break;
         default:
             break;
@@ -146,6 +153,7 @@ struct pnode pnode_copy(const struct pnode *node) {
             }
             copy.list = arr;
             copy.list_len = node->list_len;
+            copy.list_cap = node->list_len;
             return copy;
         }
         default:

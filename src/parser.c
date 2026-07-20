@@ -69,6 +69,7 @@ static struct pnode invalid_result(void) {
     n.type = PTYPE_LIST;
     n.list = NULL;
     n.list_len = (size_t)-1;
+    n.list_cap = 0;
     return n;
 }
 

@@ -14,7 +14,7 @@ struct pnode {
         int64_t integ;
         double real;
         struct { size_t str_len; const char *str; };
-        struct { size_t list_len; struct pnode *list; }; /* array, by value */
+        struct { size_t list_len; size_t list_cap; struct pnode *list; }; /* array, by value */
     };
 };
 ```
@@ -26,9 +26,10 @@ memory *inside* it - a string's bytes, or a list's child array.
 
 `str` is always NUL-terminated in addition to tracking `str_len`
 explicitly (the format allows embedded NULs, hence `str_len`). `list` is a
-contiguous array of `list_len` **values** (not pointers) owned directly by
-the node — walk it with `for (size_t i = 0; i < node->list_len; i++)`, or
-use `pnode_list_len()`. Because elements are values, `node->list[i]` is a
+contiguous array of `list_cap` elements whose first `list_len` are valid
+**values** (not pointers) owned directly by the node — walk it with
+`for (size_t i = 0; i < node->list_len; i++)`, or use `pnode_list_len()`.
+Because elements are values, `node->list[i]` is a
 `struct pnode`; take its address (`&node->list[i]`) where a
 `const struct pnode *` is expected, e.g. passing an element to
 `pnode_list_len()` or `pexpr_serialize()`.

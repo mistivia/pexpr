@@ -27,11 +27,11 @@ enum ptype {
 };
 
 /*
- * A pexpr value. `list` is a contiguous array of `list_len` child values
- * (not pointers) owned directly by this node; pnode_drop() switches on
- * `type` to release what a node owns directly (the string buffer, or the
- * `list` array itself) and recurses into each element of `list` to
- * release its owned memory in turn.
+ * A pexpr value. `list` is a contiguous array of `list_len` valid child values
+ * (not pointers) owned directly by this node; `list_cap` is the allocated
+ * capacity of that array. pnode_drop() switches on `type` to release what a
+ * node owns directly (the string buffer, or the `list` array itself) and
+ * recurses into each element of `list` to release its owned memory in turn.
  */
 struct pnode {
     enum ptype type;
@@ -43,8 +43,9 @@ struct pnode {
             const char *str; /* always NUL-terminated in addition to str_len */
         };
         struct {
-            size_t list_len;
-            struct pnode *list; /* array of list_len elements, by value; NULL iff list_len == 0 */
+            size_t list_len;  /* number of valid elements */
+            size_t list_cap;  /* allocated capacity of `list` */
+            struct pnode *list; /* array of list_cap elements, by value; NULL iff list_cap == 0 */
         };
     };
 };

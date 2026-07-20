@@ -66,6 +66,7 @@ static void test_list_build(void) {
     CHECK_EQ_LL(pnode_list_append(&list, pnode_make_str("x", 1)), 0);
 
     CHECK_EQ_LL(pnode_list_len(&list), 3);
+    CHECK(list.list_cap >= 3);
     CHECK_EQ_LL(list.list[0].integ, 1);
     CHECK_EQ_LL(list.list[1].integ, 2);
     CHECK(list.list[2].type == PTYPE_STR);
@@ -94,9 +95,30 @@ static void test_list_append_many(void) {
         CHECK_EQ_LL(pnode_list_append(&list, pnode_make_integ(i)), 0);
     }
     CHECK_EQ_LL(pnode_list_len(&list), 200);
+    CHECK(list.list_cap >= 200);
     for (int i = 0; i < 200; i++) {
         CHECK_EQ_LL(list.list[i].integ, i);
     }
+    pnode_drop(&list);
+}
+
+static void test_list_cap_growth(void) {
+    /* Capacity starts at 0 and doubles (0 -> 1 -> 2 -> 4 -> 8 ...) whenever
+     * the array is full; it must always be >= list_len. */
+    struct pnode list = pnode_make_list();
+    CHECK_EQ_LL(list.list_cap, 0);
+    size_t prev_cap = 0;
+    for (int i = 0; i < 200; i++) {
+        CHECK_EQ_LL(pnode_list_append(&list, pnode_make_integ(i)), 0);
+        CHECK(list.list_cap >= list.list_len);
+        if (list.list_cap != prev_cap) {
+            if (prev_cap == 0) CHECK_EQ_LL(list.list_cap, 1);
+            else CHECK_EQ_LL(list.list_cap, prev_cap * 2);
+            prev_cap = list.list_cap;
+        }
+    }
+    CHECK(list.list_cap >= 200);
+    CHECK(list.list_len == 200);
     pnode_drop(&list);
 }
 
@@ -202,6 +224,7 @@ void run_pnode_tests(void) {
     test_list_build();
     test_list_nested();
     test_list_append_many();
+    test_list_cap_growth();
     test_copy_scalars();
     test_copy_string_is_independent();
     test_copy_list_is_deep();
