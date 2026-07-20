@@ -13,6 +13,14 @@ static char *ser(const struct pnode *n) {
     return s;
 }
 
+static void test_nil(void) {
+    struct pnode n = pnode_make_nil();
+    char *s = ser(&n);
+    CHECK_STREQ(s, "nil");
+    free(s);
+    pnode_drop(&n);
+}
+
 static void test_integers(void) {
     struct pnode n;
     char *s;
@@ -172,6 +180,7 @@ static void test_serialize_invalid_node(void) {
 }
 
 void run_serialize_tests(void) {
+    test_nil();
     test_integers();
     test_reals();
     test_string_escapes();

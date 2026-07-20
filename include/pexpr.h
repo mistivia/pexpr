@@ -20,6 +20,7 @@ extern "C" {
  * ------------------------------------------------------------------ */
 
 enum ptype {
+    PTYPE_NIL,
     PTYPE_INTEG,
     PTYPE_REAL,
     PTYPE_STR,
@@ -32,6 +33,7 @@ enum ptype {
  * capacity of that array. pnode_drop() switches on `type` to release what a
  * node owns directly (the string buffer, or the `list` array itself) and
  * recurses into each element of `list` to release its owned memory in turn.
+ * PTYPE_NIL carries no payload.
  */
 struct pnode {
     enum ptype type;
@@ -54,12 +56,14 @@ struct pnode {
  * Construction. These return the value directly rather than a pointer:
  * struct pnode is never itself heap-allocated by this library, so the
  * caller owns its storage (a local variable, a list element, etc.).
- * PTYPE_INTEG/PTYPE_REAL/PTYPE_LIST never allocate up front, so
- * pnode_make_integ()/pnode_make_real()/pnode_make_list() can't fail.
+ * PTYPE_NIL/PTYPE_INTEG/PTYPE_REAL/PTYPE_LIST never allocate up front, so
+ * pnode_make_nil()/pnode_make_integ()/pnode_make_real()/pnode_make_list()
+ * can't fail.
  * pnode_make_str()/pnode_make_cstr() do copy `s` immediately and so can
  * fail, signaled by returning a node with `str == NULL` (never true on
  * success, even for an empty string - see pnode_ok()).
  */
+struct pnode pnode_make_nil(void); /* cannot fail */
 struct pnode pnode_make_integ(int64_t v);
 struct pnode pnode_make_real(double v);
 struct pnode pnode_make_str(const char *s, size_t len); /* copies s */
@@ -70,8 +74,8 @@ struct pnode pnode_make_list(void); /* starts empty; cannot fail */
  * True if `node` is a successfully constructed value, as opposed to the
  * failure marker pnode_make_str()/pnode_make_cstr()/pnode_copy()/
  * pexpr_parse()/p_parser_get_result() return on failure. Always true for
- * PTYPE_INTEG/PTYPE_REAL and for a genuinely empty PTYPE_LIST. `node`
- * must not be NULL.
+ * PTYPE_NIL/PTYPE_INTEG/PTYPE_REAL and for a genuinely empty PTYPE_LIST.
+ * `node` must not be NULL.
  */
 int pnode_ok(const struct pnode *node);
 

@@ -1,7 +1,7 @@
 # The P Expression Format
 
 P Expression (pexpr) is a small S-expression-like serialization format with
-four value types: integers, reals, strings, and lists.
+five value types: nil, integers, reals, strings, and lists.
 
 ```
 [1 2 [4 5 "str"]]
@@ -13,6 +13,7 @@ along with the choice this implementation makes.
 
 ## Values
 
+- **Nil** — the bareword `nil`. Carries no data.
 - **Integer** — decimal, base 10, optional leading `-`. No scientific
   notation, no leading `+` in encoder output (the parser accepts a leading
   `+` when reading, see "Parsing" below).
@@ -62,11 +63,12 @@ round-trips exactly back to the original `double` through `strtod()`.
 
 **Decoding** is lenient about the source grammar: a token is read greedily
 as `[+-]?[0-9]*(\.[0-9]*)?([eE][+-]?[0-9]*)?` starting from a byte that is
-a digit, `+`, or `-`, and is classified as a **real** if it contains `.`,
-`e`, or `E`, and as an **integer** otherwise. Whatever the token turns out
-to be, it must still parse cleanly as a whole under `strtod`/`strtoll`
-(trailing junk like `1.2.3` or `1e` with no exponent digits is a syntax
-error).
+a digit, `.`, `+`, or `-` (so a leading-dot real like `.5` is accepted, not
+just `0.5`), and is classified as a **real** if it contains `.`, `e`, or
+`E`, and as an **integer** otherwise. Whatever the token turns out to be, it
+must still parse cleanly as a whole under `strtod`/`strtoll` (trailing junk
+like `1.2.3` or `1e` with no exponent digits is a syntax error, and so is a
+bare `.` with no digits at all).
 
 ## Lists
 
@@ -82,9 +84,10 @@ The original design (see `DESIGN` in the repository history) left a few
 details implicit; this is what the implementation does and why:
 
 - **`struct pnode` is a value type across the entire public API,
-  including the parser.** `pnode_make_integ()`/`pnode_make_real()`/
-  `pnode_make_str()`/`pnode_make_cstr()`/`pnode_make_list()`/
-  `pnode_copy()`/`pexpr_parse()`/`p_parser_get_result()` all return
+  including the parser.** `pnode_make_nil()`/`pnode_make_integ()`/
+  `pnode_make_real()`/`pnode_make_str()`/`pnode_make_cstr()`/
+  `pnode_make_list()`/`pnode_copy()`/`pexpr_parse()`/
+  `p_parser_get_result()` all return
   `struct pnode` directly rather than a heap-allocated pointer, and
   `pnode_list_append()`'s `child` parameter is a value too (moved into
   the list's array on success). This library never allocates the

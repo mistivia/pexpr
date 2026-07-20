@@ -304,6 +304,15 @@ static int parse_number(struct p_parser_impl *p, struct pnode *out) {
     return 1; /* pnode_make_integ()/pnode_make_real() never fail */
 }
 
+static int parse_nil(struct p_parser_impl *p, struct pnode *out) {
+    unsigned char c;
+    if (!pk_getc(p, &c) || c != 'n') return fail(p, "expected 'nil'");
+    if (!pk_getc(p, &c) || c != 'i') return fail(p, "expected 'nil'");
+    if (!pk_getc(p, &c) || c != 'l') return fail(p, "expected 'nil'");
+    *out = pnode_make_nil();
+    return 1;
+}
+
 static int parse_list(struct parse_ctx *ctx, struct pnode *out) {
     struct p_parser_impl *p = ctx->p;
     unsigned char c = {0};
@@ -365,7 +374,8 @@ static int parse_value(struct parse_ctx *ctx, struct pnode *out) {
 
     if (c == '[') return parse_list(ctx, out);
     if (c == '"') return parse_string(p, out);
-    if (c == '-' || c == '+' || (c >= '0' && c <= '9')) return parse_number(p, out);
+    if (c == 'n') return parse_nil(p, out);
+    if (c == '.' || c == '-' || c == '+' || (c >= '0' && c <= '9')) return parse_number(p, out);
     return fail(p, "unexpected character");
 }
 

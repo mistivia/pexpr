@@ -6,7 +6,7 @@ see `doc/FORMAT.md` for the wire format itself.
 ## Values
 
 ```c
-enum ptype { PTYPE_INTEG, PTYPE_REAL, PTYPE_STR, PTYPE_LIST };
+enum ptype { PTYPE_NIL, PTYPE_INTEG, PTYPE_REAL, PTYPE_STR, PTYPE_LIST };
 
 struct pnode {
     enum ptype type;
@@ -37,6 +37,7 @@ Because elements are values, `node->list[i]` is a
 ### Building values
 
 ```c
+struct pnode nil = pnode_make_nil();
 struct pnode n = pnode_make_integ(42);
 struct pnode s = pnode_make_str("hi", 2);   /* copies the bytes */
 struct pnode s2 = pnode_make_cstr("hi");    /* same, len = strlen(s) */
@@ -52,9 +53,10 @@ int64_t second = list.list[1].integ;         /* 2 */
 pnode_drop(&list);                           /* releases everything list owns */
 pnode_drop(&n);
 pnode_drop(&s2);
+pnode_drop(&nil);
 ```
 
-`pnode_make_integ()`/`pnode_make_real()`/`pnode_make_list()` never fail
+`pnode_make_nil()`/`pnode_make_integ()`/`pnode_make_real()`/`pnode_make_list()` never fail
 (they don't allocate anything up front). `pnode_make_str()`/
 `pnode_make_cstr()` do allocate a copy of the bytes immediately, so they
 *can* fail - check with `pnode_ok()`:

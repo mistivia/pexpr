@@ -69,6 +69,8 @@ static int emit_node(struct pbuf *out, const struct pnode *node) {
     if (!node || !pnode_ok(node)) return -1;
 
     switch (node->type) {
+        case PTYPE_NIL:
+            return pbuf_write(out, "nil", 3);
         case PTYPE_INTEG:
             return emit_integ(out, node->integ);
         case PTYPE_REAL:

@@ -3,6 +3,21 @@
 
 #include <string.h>
 
+static void test_nil(void) {
+    struct pnode n = pnode_make_nil();
+    CHECK(n.type == PTYPE_NIL);
+    CHECK(pnode_ok(&n));
+    pnode_drop(&n);
+
+    struct pnode c = pnode_copy(&n);
+    CHECK(pnode_ok(&c));
+    CHECK(c.type == PTYPE_NIL);
+    pnode_drop(&c);
+
+    /* NULL-safe/idempotent drop, same as every other type. */
+    pnode_drop(&n);
+}
+
 static void test_integ(void) {
     struct pnode n = pnode_make_integ(-42);
     CHECK(n.type == PTYPE_INTEG);
@@ -216,6 +231,7 @@ static void test_misuse(void) {
 }
 
 void run_pnode_tests(void) {
+    test_nil();
     test_integ();
     test_real();
     test_str();

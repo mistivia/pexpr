@@ -3,6 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+struct pnode pnode_make_nil(void) {
+    struct pnode node;
+    node.type = PTYPE_NIL;
+    return node;
+}
+
 struct pnode pnode_make_integ(int64_t v) {
     struct pnode node;
     node.type = PTYPE_INTEG;
@@ -107,10 +113,12 @@ void pnode_drop(struct pnode *node) {
 }
 
 struct pnode pnode_copy(const struct pnode *node) {
-    struct pnode copy;
+    struct pnode copy = {0};
     copy.type = node->type;
 
     switch (node->type) {
+        case PTYPE_NIL:
+            return copy;
         case PTYPE_INTEG:
             copy.integ = node->integ;
             return copy;

@@ -8,6 +8,20 @@ static struct pnode parse(const char *s) {
     return pexpr_parse(s, strlen(s));
 }
 
+static void test_parse_nil(void) {
+    struct pnode n = parse("nil");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_NIL);
+    pnode_drop(&n);
+
+    n = parse("[nil 1 nil]");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_LIST);
+    CHECK_EQ_LL(pnode_list_len(&n), 3);
+    CHECK(n.list[0].type == PTYPE_NIL);
+    CHECK(n.list[1].type == PTYPE_INTEG);
+    CHECK(n.list[2].type == PTYPE_NIL);
+    pnode_drop(&n);
+}
+
 static void test_parse_integers(void) {
     struct pnode n;
 
@@ -48,6 +62,17 @@ static void test_parse_reals(void) {
     n = parse("-2.5E-3");
     CHECK(pnode_ok(&n) && n.type == PTYPE_REAL);
     CHECK_EQ_DBL(n.real, -2.5E-3);
+    pnode_drop(&n);
+
+    /* Leading-dot reals (no digit before the '.') are accepted. */
+    n = parse(".5");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_REAL);
+    CHECK_EQ_DBL(n.real, 0.5);
+    pnode_drop(&n);
+
+    n = parse("-.25");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_REAL);
+    CHECK_EQ_DBL(n.real, -0.25);
     pnode_drop(&n);
 
     /* No '.' or 'e' -> integer, per DESIGN's lenient number rule. */
@@ -139,6 +164,8 @@ static void test_parse_errors(void) {
     n = parse("."); CHECK(!pnode_ok(&n)); pnode_drop(&n);
     n = parse("1.2.3"); CHECK(!pnode_ok(&n)); pnode_drop(&n); /* strtod stops early -> trailing junk */
     n = parse("1e"); CHECK(!pnode_ok(&n)); pnode_drop(&n);    /* exponent marker with no digits */
+    n = parse("ni"); CHECK(!pnode_ok(&n)); pnode_drop(&n);    /* truncated nil literal */
+    n = parse("nix"); CHECK(!pnode_ok(&n)); pnode_drop(&n);   /* not the nil literal */
 }
 
 static void test_parse_deep_nesting(void) {
@@ -171,6 +198,7 @@ static void test_round_trip(void) {
     const char *inputs[] = {
         "0", "-1", "123456789", "1.5", "-3.25e+10", "\"a\\nb\"",
         "[1 2 3]", "[]", "[[1] [2] [[3]]]", "[\"x\" 1 2.5 [\"y\"]]",
+        "nil", ".5", "-.25", "[nil 1 nil]",
     };
     for (size_t i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++) {
         struct pnode n1 = parse(inputs[i]);
@@ -196,6 +224,7 @@ static void test_round_trip(void) {
 }
 
 void run_parser_tests(void) {
+    test_parse_nil();
     test_parse_integers();
     test_parse_reals();
     test_parse_strings();

@@ -3,7 +3,7 @@
 **AI-GENERATED CONTENT**
 
 A small C library for **P Expression**, an S-expression-like serialization
-format with four value types — integers, reals, strings, and lists:
+format with five value types — nil, integers, reals, strings, and lists:
 
 ```
 [1 2 [4 5 "str"]]

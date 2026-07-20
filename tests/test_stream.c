@@ -30,6 +30,41 @@ static void test_stream_byte_by_byte_list(void) {
     p_parser_destroy(&p);
 }
 
+static void test_stream_nil_self_delimits(void) {
+    /* Unlike a bare number, "nil" is a fixed-length literal - it completes
+     * as soon as the third byte is fed, without needing an EOF signal. */
+    struct p_parser p;
+    CHECK_EQ_LL(p_parser_init(&p), 0);
+
+    CHECK(p_parser_feed(&p, 1, "n") == P_PARSER_PAUSE);
+    CHECK(p_parser_feed(&p, 1, "i") == P_PARSER_PAUSE);
+    CHECK(p_parser_feed(&p, 1, "l") == P_PARSER_SUCC);
+
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_NIL);
+    pnode_drop(&n);
+
+    p_parser_destroy(&p);
+}
+
+static void test_stream_leading_dot_real_needs_eof(void) {
+    struct p_parser p;
+    CHECK_EQ_LL(p_parser_init(&p), 0);
+
+    const char *tok = ".5";
+    for (size_t i = 0; i < strlen(tok); i++) {
+        CHECK(p_parser_feed(&p, 1, tok + i) == P_PARSER_PAUSE);
+    }
+    CHECK(p_parser_feed(&p, 0, NULL) == P_PARSER_SUCC);
+
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_REAL);
+    CHECK_EQ_DBL(n.real, 0.5);
+    pnode_drop(&n);
+
+    p_parser_destroy(&p);
+}
+
 static void test_stream_bare_number_needs_eof(void) {
     struct p_parser p;
     CHECK_EQ_LL(p_parser_init(&p), 0);
@@ -200,6 +235,8 @@ static void test_stream_large_chunks(void) {
 
 void run_stream_tests(void) {
     test_stream_byte_by_byte_list();
+    test_stream_nil_self_delimits();
+    test_stream_leading_dot_real_needs_eof();
     test_stream_bare_number_needs_eof();
     test_stream_real_needs_eof();
     test_stream_reuse();
