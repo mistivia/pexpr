@@ -28,14 +28,10 @@ enum ptype {
 };
 
 /*
- * A pexpr value. `list` is a contiguous array of `list_len` valid child values
- * (not pointers) owned directly by this node; `list_cap` is the allocated
- * capacity of that array. pnode_drop() switches on `type` to release what a
- * node owns directly (the string/symbol buffer, or the `list` array itself)
- * and recurses into each element of `list` to release its owned memory in
- * turn. PTYPE_SYMBOL shares the `str`/`str_len` fields with PTYPE_STR (same
- * storage, only `type` differs) - there is no separate nil type, since `nil`
- * is just an ordinary symbol.
+ * A pexpr value. `list` is a contiguous array of `list_len` valid child
+ * values (not pointers), `list_cap` sized. PTYPE_SYMBOL shares the
+ * `str`/`str_len` fields with PTYPE_STR - there's no separate nil type,
+ * `nil` is just an ordinary symbol.
  */
 struct pnode {
     enum ptype type;
@@ -55,21 +51,14 @@ struct pnode {
 };
 
 /*
- * Construction. These return the value directly rather than a pointer:
- * struct pnode is never itself heap-allocated by this library, so the
- * caller owns its storage (a local variable, a list element, etc.).
- * PTYPE_INTEG/PTYPE_REAL/PTYPE_LIST never allocate up front, so
- * pnode_make_integ()/pnode_make_real()/pnode_make_list() can't fail.
- * pnode_make_str()/pnode_make_cstr()/pnode_make_nsymbol()/pnode_make_symbol()
- * do copy `s` immediately and so can fail, signaled by returning a node with
- * `str == NULL` (never true on success, even for an empty string - see
- * pnode_ok()). pnode_make_nsymbol()/pnode_make_symbol() fold any uppercase
- * ASCII letters (A-Z) in `s` to lowercase before storing (symbols are
- * case-insensitive), but do not themselves validate that the result matches
- * the symbol grammar (<initial> <subsequent>*, or one of the peculiar
- * identifiers `+`/`-`/`...` - see doc/FORMAT.md) - that's checked by
- * pexpr_serialize() at encode time, same as pnode_make_real() not rejecting
- * NaN/Inf up front.
+ * Construction. struct pnode is never heap-allocated by this library, so
+ * these return it by value; the caller owns its storage.
+ * pnode_make_integ()/real()/list() can't fail. pnode_make_str()/cstr()/
+ * nsymbol()/symbol() copy `s` and can fail, signaled by `str == NULL` (see
+ * pnode_ok()). Symbols are case-insensitive: uppercase ASCII letters are
+ * folded to lowercase before storing; the symbol grammar itself (see
+ * doc/FORMAT.md) isn't validated until pexpr_serialize(), same as
+ * pnode_make_real() not rejecting NaN/Inf up front.
  */
 struct pnode pnode_make_integ(int64_t v);
 struct pnode pnode_make_real(double v);
@@ -79,71 +68,46 @@ struct pnode pnode_make_nsymbol(const char *s, size_t len); /* copies s */
 struct pnode pnode_make_symbol(const char *s); /* copies s; len = strlen(s) */
 struct pnode pnode_make_list(void); /* starts empty; cannot fail */
 
-/*
- * True if `node` is a successfully constructed value, as opposed to the
- * failure marker pnode_make_str()/pnode_make_cstr()/pnode_make_nsymbol()/
- * pnode_make_symbol()/pnode_copy()/pexpr_parse()/p_parser_get_result()
- * return on failure. Always true for PTYPE_INTEG/PTYPE_REAL and for a
- * genuinely empty PTYPE_LIST. `node` must not be NULL.
- */
+/* True if `node` is a successfully constructed value, as opposed to a
+ * failure marker (see the constructors above, pnode_copy(),
+ * pexpr_parse(), p_parser_get_result()). `node` must not be NULL. */
 int pnode_ok(const struct pnode *node);
 
-/*
- * Appends `child` to `list` (must be PTYPE_LIST) by moving its contents
- * into `list`'s array; `child` is consumed on success - the caller's own
- * copy must not be dropped or read afterward (its payload, if any, now
- * belongs to `list`). Returns 0 on success, -1 on error (bad `list`, or
- * allocation failure - on failure `child` is completely untouched, since
- * it was passed by value, and remains the caller's to drop).
- */
+/* Moves `child` into `list` (must be PTYPE_LIST); don't touch `child`
+ * again after a successful call. Returns 0 on success, -1 on error (bad
+ * `list`, or allocation failure - `child` is left untouched, still the
+ * caller's to drop). */
 int pnode_list_append(struct pnode *list, struct pnode child);
 
 /* Number of children in a PTYPE_LIST node. */
 size_t pnode_list_len(const struct pnode *list);
 
-/* Recursively frees everything `node` owns (a string buffer, or a list's
- * elements and their own owned memory), but not `node` itself - callers
- * own the storage for `struct pnode` values (stack, array element,
- * etc.), not this library. NULL-safe. Safe to call more than once: it
- * resets what it just freed to an empty, still-droppable state. */
+/* Recursively frees what `node` owns, but not `node` itself (callers own
+ * that storage, not this library). NULL-safe, idempotent. */
 void pnode_drop(struct pnode *node);
 
-/* Recursively deep-copies a node (including every list descendant and
- * every string's bytes); the result shares no memory with `node` and
- * must be released separately with pnode_drop(). `node` must not be
- * NULL. On allocation failure, returns a value for which pnode_ok() is
- * false; whatever was already copied before the failure is freed
- * internally, so there is nothing for the caller to clean up in that
- * case. */
+/* Recursively deep-copies `node`; release the result separately with
+ * pnode_drop(). `node` must not be NULL. On allocation failure, returns a
+ * value for which pnode_ok() is false; nothing left to clean up. */
 struct pnode pnode_copy(const struct pnode *node);
 
 /* ------------------------------------------------------------------ *
  * Serialization (in-memory pnode -> P Expression text)
  * ------------------------------------------------------------------ */
 
-/*
- * Serializes `node` to newly malloc'd, NUL-terminated text. If `out_len`
- * is non-NULL, receives the length of the text excluding the NUL.
- * Returns NULL on error (NULL node, non-finite double, a PTYPE_SYMBOL
- * whose bytes don't match the symbol grammar (doc/FORMAT.md), or
- * allocation failure) - non-finite doubles (NaN/Inf) have no decimal
- * representation per the format, so encoding one is an error rather than
- * best-effort, same as an ill-formed symbol. Caller owns the returned
- * buffer and must free() it.
- */
+/* Serializes `node` to newly malloc'd, NUL-terminated text (caller must
+ * free() it); `out_len`, if non-NULL, receives the length excluding the
+ * NUL. Returns NULL on error: NULL node, NaN/Inf double, a PTYPE_SYMBOL
+ * not matching the symbol grammar (doc/FORMAT.md), or allocation failure. */
 char *pexpr_serialize(const struct pnode *node, size_t *out_len);
 
 /* ------------------------------------------------------------------ *
  * One-shot parsing
  * ------------------------------------------------------------------ */
 
-/*
- * Parses one complete P Expression value from `buf`. On syntax error,
- * empty input, or allocation failure, returns a value for which
- * pnode_ok() is false (nothing to release in that case). Trailing bytes
- * after the value (if any) are ignored. Release the result with
- * pnode_drop().
- */
+/* Parses one complete value from `buf`; trailing bytes are ignored. On
+ * syntax error, empty input, or allocation failure, returns a value for
+ * which pnode_ok() is false. Release the result with pnode_drop(). */
 struct pnode pexpr_parse(const char *buf, size_t len);
 
 /* ------------------------------------------------------------------ *
@@ -166,42 +130,35 @@ struct p_parser {
  * success, -1 on allocation failure. */
 int p_parser_init(struct p_parser *self);
 
-/*
- * Feeds `len` bytes at `str` to the parser and runs it until it either
- * completes a value (P_PARSER_SUCC), hits a syntax error
- * (P_PARSER_FAIL), or exhausts the given bytes and needs more
- * (P_PARSER_PAUSE) - call p_parser_feed() again with the next chunk in
- * that case. `str` need only stay valid for the duration of this call.
- *
- * End of input: since a bare top-level number has no closing delimiter,
- * the parser cannot know it is complete until told there is nothing
- * more. Call p_parser_feed(self, 0, NULL) (len == 0) to signal end of
- * input; this is the one addition this implementation makes on top of
- * DESIGN's literal signature, and is needed for correctness.
- *
- * Once the parser has reached P_PARSER_SUCC or P_PARSER_FAIL, further
- * feed() calls return that same terminal state without consuming input,
- * until p_parser_get_result() (on success) or p_parser_init()/
- * p_parser_destroy() (on failure) resets things.
- */
+/* Feeds `len` bytes at `str`, running the parser until it completes
+ * (P_PARSER_SUCC), hits a syntax error (P_PARSER_FAIL), or exhausts the
+ * chunk and needs more (P_PARSER_PAUSE - feed the next chunk). `str` need
+ * only stay valid for this call. A bare top-level number has no closing
+ * delimiter, so call p_parser_feed(self, 0, NULL) to signal end of input.
+ * Once P_PARSER_SUCC/P_PARSER_FAIL is reached, further feeds return that
+ * same state without consuming input until p_parser_reset(). */
 enum p_parser_state p_parser_feed(struct p_parser *self, size_t len, const char *str);
 
-/*
- * If the parser is in P_PARSER_SUCC, returns the parsed value (caller
- * owns it, release with pnode_drop()) and resets `self` so it is ready
- * to parse another value. Otherwise returns a value for which
- * pnode_ok() is false, and leaves `self` untouched.
- */
+/* If in P_PARSER_SUCC and not already retrieved, returns the parsed value
+ * (caller owns it, release with pnode_drop()); otherwise a value for
+ * which pnode_ok() is false. Does not reset `self` - call
+ * p_parser_reset() explicitly once done with the result. */
 struct pnode p_parser_get_result(struct p_parser *self);
 
 /* Human-readable description of the last error, valid after
- * P_PARSER_FAIL until the next init/feed/destroy. Never NULL. */
+ * P_PARSER_FAIL until the next reset/feed/destroy. Never NULL. */
 const char *p_parser_errmsg(const struct p_parser *self);
 
-/* Releases all resources held by `self` (including its coroutine stack).
- * Safe to call in any state, including mid-parse if you're abandoning a
- * parse early. `self` must not be used again without a fresh
- * p_parser_init(). */
+/* Discards whatever `self` was doing - P_PARSER_SUCC (retrieved or not),
+ * P_PARSER_FAIL, or an in-progress parse - and puts it back in
+ * P_PARSER_PAUSE. The only way to reuse `self` after a terminal state, or
+ * to abandon an in-progress parse without destroying it. Returns 0, or -1
+ * on allocation failure (leaves `self` in P_PARSER_FAIL, `self->impl`
+ * still valid - safe to retry or destroy). */
+int p_parser_reset(struct p_parser *self);
+
+/* Releases all resources held by `self`. Safe in any state, including
+ * mid-parse. `self` needs a fresh p_parser_init() before reuse. */
 void p_parser_destroy(struct p_parser *self);
 
 #ifdef __cplusplus

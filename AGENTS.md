@@ -84,7 +84,7 @@ it differ. Consequently:
 ### Streaming parser: recursive-descent grammar written as synchronous code via a coroutine
 
 `src/parser.c` implements the streaming parser (`p_parser_init/feed/
-get_result/errmsg/destroy`) as an ordinary-looking recursive-descent parser
+get_result/errmsg/reset/destroy`) as an ordinary-looking recursive-descent parser
 (`parse_value` / `parse_list` / `parse_string` / `parse_number`) that would
 normally require a hand-rolled state machine to pause/resume across
 `p_parser_feed()` calls. Instead it runs inside a

@@ -142,6 +142,9 @@ static void test_stream_real_needs_eof(void) {
 }
 
 static void test_stream_reuse(void) {
+    /* p_parser_feed() is sticky at P_PARSER_SUCC/P_PARSER_FAIL - reusing
+     * the parser for another document requires an explicit
+     * p_parser_reset() first; get_result() alone doesn't advance it. */
     struct p_parser p;
     CHECK_EQ_LL(p_parser_init(&p), 0);
 
@@ -150,6 +153,11 @@ static void test_stream_reuse(void) {
     CHECK(pnode_ok(&n1) && pnode_list_len(&n1) == 2);
     pnode_drop(&n1);
 
+    /* Without a reset, feed() just returns the same terminal state again,
+     * without consuming input. */
+    CHECK(p_parser_feed(&p, 5, "[3 4]") == P_PARSER_SUCC);
+
+    CHECK_EQ_LL(p_parser_reset(&p), 0);
     CHECK(p_parser_feed(&p, 5, "[3 4]") == P_PARSER_SUCC);
     struct pnode n2 = p_parser_get_result(&p);
     CHECK(pnode_ok(&n2) && pnode_list_len(&n2) == 2);
@@ -162,6 +170,81 @@ static void test_stream_reuse(void) {
     pnode_drop(&none);
 
     p_parser_destroy(&p);
+}
+
+static void test_stream_reset_without_get_result(void) {
+    /* Resetting a completed parse without ever calling get_result() must
+     * still release the parsed value (verified under ASan) - not just
+     * whatever's in flight. */
+    struct p_parser p;
+    CHECK_EQ_LL(p_parser_init(&p), 0);
+
+    CHECK(p_parser_feed(&p, 5, "[1 2]") == P_PARSER_SUCC);
+    CHECK_EQ_LL(p_parser_reset(&p), 0);
+    CHECK(p_parser_feed(&p, 5, "[3 4]") == P_PARSER_SUCC);
+
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && pnode_list_len(&n) == 2);
+    CHECK_EQ_LL(n.list[0].integ, 3);
+    pnode_drop(&n);
+
+    p_parser_destroy(&p);
+}
+
+static void test_stream_reset_after_fail(void) {
+    /* p_parser_reset() also recovers from P_PARSER_FAIL, in place -
+     * previously the only way to do this was destroy() + init(). */
+    struct p_parser p;
+    CHECK_EQ_LL(p_parser_init(&p), 0);
+
+    CHECK(p_parser_feed(&p, 8, "@garbage") == P_PARSER_FAIL);
+    CHECK_EQ_LL(p_parser_reset(&p), 0);
+
+    CHECK(p_parser_feed(&p, 5, "[1 2]") == P_PARSER_SUCC);
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && pnode_list_len(&n) == 2);
+    pnode_drop(&n);
+
+    p_parser_destroy(&p);
+}
+
+static void test_stream_reset_midparse(void) {
+    /* Reset can also abandon an in-progress parse and reuse the parser,
+     * exercising the same in-flight reclaim path p_parser_destroy() uses
+     * (verified under ASan). */
+    struct p_parser p;
+    CHECK_EQ_LL(p_parser_init(&p), 0);
+
+    CHECK(p_parser_feed(&p, 3, "[1 ") == P_PARSER_PAUSE);
+    CHECK_EQ_LL(p_parser_reset(&p), 0);
+
+    CHECK(p_parser_feed(&p, 5, "[3 4]") == P_PARSER_SUCC);
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && pnode_list_len(&n) == 2);
+    CHECK_EQ_LL(n.list[0].integ, 3);
+    pnode_drop(&n);
+
+    p_parser_destroy(&p);
+}
+
+static void test_stream_reset_never_fed(void) {
+    struct p_parser p;
+    CHECK_EQ_LL(p_parser_init(&p), 0);
+    CHECK_EQ_LL(p_parser_reset(&p), 0);
+
+    CHECK(p_parser_feed(&p, 5, "[1 2]") == P_PARSER_SUCC);
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && pnode_list_len(&n) == 2);
+    pnode_drop(&n);
+
+    p_parser_destroy(&p);
+}
+
+static void test_stream_reset_invalid_self(void) {
+    CHECK_EQ_LL(p_parser_reset(NULL), -1);
+
+    struct p_parser p = {0};
+    CHECK_EQ_LL(p_parser_reset(&p), -1); /* never initialized: impl is NULL */
 }
 
 static void test_stream_fail(void) {
@@ -284,6 +367,11 @@ void run_stream_tests(void) {
     test_stream_bare_number_needs_eof();
     test_stream_real_needs_eof();
     test_stream_reuse();
+    test_stream_reset_without_get_result();
+    test_stream_reset_after_fail();
+    test_stream_reset_midparse();
+    test_stream_reset_never_fed();
+    test_stream_reset_invalid_self();
     test_stream_fail();
     test_stream_fail_unterminated();
     test_stream_destroy_midparse();

@@ -8,8 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Maximum list nesting depth. Guards the coroutine's fixed-size stack
- * against unbounded recursion on adversarial input. */
+/* Bounds the coroutine's stack against unbounded recursion. */
 #define PEXPR_MAX_DEPTH 256
 
 struct p_parser_impl {
@@ -22,35 +21,17 @@ struct p_parser_impl {
     size_t in_pos;
     int eof;
 
-    /* Set by the coroutine entry point when it finishes; handed back by
-     * value from p_parser_get_result(). */
-    int parse_ok;
+    int parse_ok; /* set by the coroutine entry point when it finishes */
     struct pnode result;
+    int result_taken; /* true once p_parser_get_result() has moved `result` out */
 
     /*
-     * If p_parser_destroy() is called while the coroutine is suspended
-     * mid-parse, minicoro just deallocates its stack - any C local
-     * variables on it (partially built pnode trees, in-progress string/
-     * number scratch buffers) are never unwound, so whatever they own
-     * would otherwise leak. These two fields let the parser register its
-     * in-flight allocations so destroy() can still free them:
-     *
-     * - `open_lists` holds the address of every PTYPE_LIST value
-     *   currently under construction (one push per active parse_list()
-     *   stack frame, popped right before that frame returns via any
-     *   path). These addresses point *into the coroutine's own stack*
-     *   (a local variable in a suspended call frame) - valid to read
-     *   right up until mco_destroy() deallocates that stack, which is
-     *   why reclaim_in_flight() must run before it. A node only becomes
-     *   reachable from its parent's `list` array *after* its own
-     *   parse_list() call returns, so at any given yield point these
-     *   nodes are not yet linked to each other and pnode_drop() (which
-     *   only ever touches what a node *owns*, never the node's own
-     *   storage) can be called on each independently.
-     * - `active_buf` points at the single struct pbuf (if any) currently
-     *   accumulating a string or number token - also coroutine-stack
-     *   memory. Only one can be active at a time, since collecting a
-     *   token never recurses.
+     * Allocations that live on the coroutine's own stack. Abandoning a
+     * parse (reset/destroy mid-stream) makes minicoro free that stack
+     * without running C destructors, so these must be freed explicitly
+     * first: `open_lists` is every PTYPE_LIST under construction (pushed/
+     * popped around parse_list()); `active_buf` is the one token buffer
+     * in progress, if any (token collection never recurses).
      */
     struct pnode **open_lists;
     size_t open_lists_len;
@@ -60,10 +41,9 @@ struct p_parser_impl {
     char errmsg[160];
 };
 
-/* Canonical "no value" marker for the parser's two boundary functions,
- * distinguishable from every successful parse via pnode_ok(): a
- * PTYPE_LIST with list_len != 0 but list == NULL never occurs otherwise
- * (see pnode_copy()'s use of the same convention in src/pnode.c). */
+/* "No value" marker, distinguishable via pnode_ok(): a PTYPE_LIST with
+ * list == NULL but list_len == (size_t)-1, same convention pnode_copy()
+ * uses for its own failure case. */
 static struct pnode invalid_result(void) {
     struct pnode n;
     n.type = PTYPE_LIST;
@@ -89,10 +69,8 @@ static void pop_open_list(struct p_parser_impl *p) {
     p->open_lists_len--;
 }
 
-/* Frees whatever the parser currently has in flight. Safe to call
- * regardless of parser state: after a normal SUCC/FAIL completion these
- * are already empty, since every code path pops/clears them before
- * returning. */
+/* Frees whatever's currently in flight; safe any time (already empty
+ * after a normal SUCC/FAIL completion). */
 static void reclaim_in_flight(struct p_parser_impl *p) {
     if (p->active_buf) {
         pbuf_free(p->active_buf);
@@ -118,8 +96,7 @@ struct parse_ctx {
  * hasn't signaled end of input yet.
  * ------------------------------------------------------------------ */
 
-/* Returns 1 and sets *out without consuming it, or returns 0 once input
- * is permanently exhausted (EOF signaled by the caller). */
+/* Peeks without consuming; returns 0 once permanently exhausted (EOF). */
 static int pk_peek(struct p_parser_impl *p, unsigned char *out) {
     for (;;) {
         if (p->in_pos < p->in_len) {
@@ -168,15 +145,12 @@ static int hex_val(unsigned char c) {
     return -1;
 }
 
-/* Every parse_*() function below fills `*out` (caller-owned storage,
- * typically a local variable somewhere on the coroutine's stack) and
- * returns 1 on success, or returns 0 and leaves `*out` untouched on
- * failure. */
+/* Each parse_*() fills `*out` and returns 1, or returns 0 leaving `*out`
+ * untouched. */
 static int parse_value(struct parse_ctx *ctx, struct pnode *out);
 
-/* Clears the active-scratch-buffer registration, frees it, and fails.
- * Centralizes the bookkeeping every error exit from parse_string() and
- * parse_number() needs (see `active_buf` in struct p_parser_impl). */
+/* Clears `active_buf`, frees `buf`, and fails - the common error exit for
+ * parse_string()/parse_number(). */
 static int buf_fail(struct p_parser_impl *p, struct pbuf *buf, const char *msg) {
     p->active_buf = NULL;
     pbuf_free(buf);
@@ -272,8 +246,8 @@ static int parse_number(struct p_parser_impl *p, struct pnode *out) {
     p->active_buf = NULL;
     if (!tok) return fail(p, "out of memory");
 
-    /* len is never 0 here: parse_value() only calls parse_number() after
-     * peeking a byte that already satisfies is_num_char(). */
+    /* len > 0: parse_value() only dispatches here on a byte already
+     * matching is_num_char(). */
 
     int is_float = 0;
     for (size_t i = 0; i < len; i++) {
@@ -330,11 +304,8 @@ static int is_symbol_subsequent(unsigned char c) {
            c == '.' || c == '+' || c == '-' || c == '@';
 }
 
-/* Reads a token via `pbuf`, using `is_char` to decide which bytes belong to
- * it. Shared by parse_symbol() and parse_number_or_symbol() - both just
- * greedily collect bytes and classify the result afterward. Returns NULL
- * on allocation failure (either mid-collection or at release); the caller
- * reports that uniformly, same as every other token reader in this file. */
+/* Greedily collects bytes matching `is_char` into a token; shared by
+ * parse_symbol() and parse_number_or_symbol(). NULL on allocation failure. */
 static char *collect_token(struct p_parser_impl *p, int (*is_char)(unsigned char), size_t *out_len) {
     struct pbuf buf = {0};
     pbuf_init(&buf);
@@ -355,16 +326,11 @@ static char *collect_token(struct p_parser_impl *p, int (*is_char)(unsigned char
     return tok;
 }
 
-/* Dispatched when the first byte is a letter or a <special initial> byte -
- * unambiguously the start of <initial> <subsequent>*, never a number. */
+/* First byte already matched is_symbol_initial(): never a number. */
 static int parse_symbol(struct p_parser_impl *p, struct pnode *out) {
     size_t len;
-    char *tok = collect_token(p, is_symbol_subsequent, &len);
+    char *tok = collect_token(p, is_symbol_subsequent, &len); /* len > 0 */
     if (!tok) return fail(p, "out of memory");
-
-    /* len is never 0 here: parse_value() only calls parse_symbol() after
-     * peeking a byte that already satisfies is_symbol_initial(), a subset
-     * of is_symbol_subsequent(). */
 
     struct pnode node = pnode_make_nsymbol(tok, len);
     free(tok);
@@ -378,18 +344,13 @@ static int is_peculiar_symbol(const char *tok, size_t len) {
     return len == 1 && (tok[0] == '+' || tok[0] == '-');
 }
 
-/* Dispatched when the first byte is '+' or '-' - these are shared between
- * numbers (leading sign) and the two "peculiar identifier" symbols `+`
- * and `-`, so the token has to be collected first and classified
- * afterward rather than picked apart char-by-char. */
+/* '+'/'-' are ambiguous: each is both a number sign and a standalone
+ * peculiar symbol, so collect the whole token first and classify after
+ * rather than picking it apart char-by-char. */
 static int parse_number_or_symbol(struct p_parser_impl *p, struct pnode *out) {
     size_t len;
-    char *tok = collect_token(p, is_symbol_subsequent, &len);
+    char *tok = collect_token(p, is_symbol_subsequent, &len); /* len > 0 */
     if (!tok) return fail(p, "out of memory");
-
-    /* len is never 0 here: parse_value() only calls this after peeking a
-     * byte that already satisfies is_symbol_subsequent() ('+' and '-'
-     * are both in that set). */
 
     if (is_peculiar_symbol(tok, len)) {
         struct pnode node = pnode_make_nsymbol(tok, len);
@@ -521,6 +482,19 @@ static mco_result start_coroutine(struct p_parser_impl *p) {
     return mco_create(&p->co, &desc);
 }
 
+/* Fresh P_PARSER_PAUSE state, for right after (re)starting a coroutine.
+ * Shared by p_parser_init() and p_parser_reset(). */
+static void reset_fields(struct p_parser_impl *p) {
+    p->state = P_PARSER_PAUSE;
+    p->in_buf = NULL;
+    p->in_len = 0;
+    p->in_pos = 0;
+    p->eof = 0;
+    p->parse_ok = 0;
+    p->result_taken = 0;
+    p->errmsg[0] = '\0';
+}
+
 int p_parser_init(struct p_parser *self) {
     if (!self) return -1;
 
@@ -536,7 +510,7 @@ int p_parser_init(struct p_parser *self) {
         return -1;
     }
 
-    p->state = P_PARSER_PAUSE;
+    reset_fields(p);
     self->impl = p;
     return 0;
 }
@@ -573,30 +547,11 @@ struct pnode p_parser_get_result(struct p_parser *self) {
     if (!self || !self->impl) return invalid_result();
     struct p_parser_impl *p = self->impl;
 
-    if (p->state != P_PARSER_SUCC) return invalid_result();
+    if (p->state != P_PARSER_SUCC || p->result_taken) return invalid_result();
 
     struct pnode result = p->result;
     p->result = pnode_make_integ(0); /* ownership moved out; leave a safe, empty value behind */
-
-    mco_destroy(p->co);
-    p->co = NULL;
-
-    if (start_coroutine(p) != MCO_SUCCESS) {
-        p->state = P_PARSER_FAIL;
-        snprintf(p->errmsg, sizeof p->errmsg, "out of memory reinitializing parser");
-        return result; /* still hand back the value already parsed */
-    }
-
-    p->state = P_PARSER_PAUSE;
-    p->in_buf = NULL;
-    p->in_len = 0;
-    p->in_pos = 0;
-    p->eof = 0;
-    p->parse_ok = 0;
-    p->errmsg[0] = '\0';
-    /* Should already be empty (every path pops/clears before the
-     * coroutine returns) - reset defensively anyway. */
-    reclaim_in_flight(p);
+    p->result_taken = 1;
     return result;
 }
 
@@ -605,13 +560,34 @@ const char *p_parser_errmsg(const struct p_parser *self) {
     return self->impl->errmsg;
 }
 
+int p_parser_reset(struct p_parser *self) {
+    if (!self || !self->impl) return -1;
+    struct p_parser_impl *p = self->impl;
+
+    /* Must run before mco_destroy() frees the stack these point into. */
+    reclaim_in_flight(p);
+    pnode_drop(&p->result); /* no-op if p_parser_get_result() already took it */
+
+    if (p->co) {
+        mco_destroy(p->co);
+        p->co = NULL;
+    }
+
+    if (start_coroutine(p) != MCO_SUCCESS) {
+        p->state = P_PARSER_FAIL;
+        snprintf(p->errmsg, sizeof p->errmsg, "out of memory reinitializing parser");
+        return -1;
+    }
+
+    reset_fields(p);
+    return 0;
+}
+
 void p_parser_destroy(struct p_parser *self) {
     if (!self || !self->impl) return;
     struct p_parser_impl *p = self->impl;
 
-    /* Must run before mco_destroy(): on an abandoned mid-parse, the
-     * pointers being reclaimed here point into the coroutine's own
-     * stack, which mco_destroy() deallocates. */
+    /* Must run before mco_destroy() frees the stack these point into. */
     reclaim_in_flight(p);
     pnode_drop(&p->result);
 

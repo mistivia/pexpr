@@ -169,13 +169,15 @@ do {
 } while (st == P_PARSER_PAUSE);
 
 if (st == P_PARSER_SUCC) {
-    struct pnode result = p_parser_get_result(&p); /* also resets p */
+    struct pnode result = p_parser_get_result(&p);
     /* ... use result ... */
     pnode_drop(&result);
 } else {
     fprintf(stderr, "parse error: %s\n", p_parser_errmsg(&p));
 }
 
+p_parser_reset(&p); /* ready for another document */
+/* ... */
 p_parser_destroy(&p);
 ```
 
@@ -188,23 +190,24 @@ Key points:
   without needing this.
 - **Terminal states stick.** Once `p_parser_feed()` returns `P_PARSER_SUCC`
   or `P_PARSER_FAIL`, further calls return that same state without
-  consuming input, until you call `p_parser_get_result()` (on success) or
-  reinitialize.
-- **`p_parser_get_result()` resets the parser** on success, so the same
-  `struct p_parser` can parse another value right away — no need to
-  `p_parser_destroy()` + `p_parser_init()` between documents. It returns
-  `struct pnode` by value, same as `pexpr_parse()`; called when not in
-  `P_PARSER_SUCC`, it returns a value for which `pnode_ok()` is false
-  and leaves `self` untouched.
-- **`p_parser_destroy()` is always safe**, including mid-parse (e.g. you
-  decide to give up after a timeout). It's implemented on top of a
+  consuming input, until you call `p_parser_reset()`.
+- **`p_parser_get_result()` does not reset the parser.** It just retrieves
+  the value (once - a second call returns a not-ok value); `self` stays in
+  `P_PARSER_SUCC` until you call `p_parser_reset()`, whether or not you
+  called `get_result()` first.
+- **`p_parser_reset()` is the one way to reuse `self`** after
+  `P_PARSER_SUCC`/`P_PARSER_FAIL`, or to abandon an in-progress parse
+  without destroying it — no need for `p_parser_destroy()` +
+  `p_parser_init()` between documents. Returns 0, or -1 on allocation
+  failure (leaves `self` in `P_PARSER_FAIL`, still safe to retry or
+  destroy).
+- **`p_parser_destroy()` is always safe**, including mid-parse. Both it and
+  `p_parser_reset()` are built on top of a
   [minicoro](https://github.com/edubart/minicoro) coroutine so the
   recursive-descent parser can be written as ordinary, synchronous-looking
-  code; destroying mid-parse reclaims whatever partial value tree and
-  scratch buffers were in flight at the point it paused (see the
-  `open_lists` / `active_buf` comment in `src/parser.c` if you're curious
-  why that needs explicit bookkeeping instead of just freeing the
-  coroutine stack).
+  code; abandoning mid-parse reclaims whatever partial value tree and
+  scratch buffers were in flight (see the `open_lists` / `active_buf`
+  comment in `src/parser.c`).
 - `p_parser_errmsg()` is always safe to call and never returns `NULL`
   (empty string if there's nothing to report yet).
 

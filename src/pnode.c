@@ -39,8 +39,7 @@ struct pnode pnode_make_cstr(const char *s) {
     return pnode_make_str(s, strlen(s));
 }
 
-/* Symbols are case-insensitive: uppercase ASCII letters are folded to
- * lowercase before storage, so "FOO" and "foo" end up byte-identical. */
+/* Symbols are case-insensitive: fold uppercase letters to lowercase. */
 struct pnode pnode_make_nsymbol(const char *s, size_t len) {
     struct pnode node = pnode_make_str(s, len);
     node.type = PTYPE_SYMBOL;
