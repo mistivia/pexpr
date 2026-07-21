@@ -145,7 +145,7 @@ get wrong when changing either side:
   (escapes everything outside printable ASCII `0x20`-`0x7e` as `\xhh`).
   Round-tripping through encode→decode is exact; decode→encode is not
   required to be.
-- `.`, `+`, and `-` start both numbers and the "peculiar identifier" symbols
+- `+` and `-` start both numbers and the "peculiar identifier" symbols
   `+`/`-` - `parse_number_or_symbol()` in `src/parser.c` collects the whole
   token first (superset charset) and classifies it afterward, rather than
   trying to disambiguate character-by-character, since the

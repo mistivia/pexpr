@@ -378,18 +378,18 @@ static int is_peculiar_symbol(const char *tok, size_t len) {
     return len == 1 && (tok[0] == '+' || tok[0] == '-');
 }
 
-/* Dispatched when the first byte is '.', '+', or '-' - these are shared
- * between numbers (leading sign/dot) and the two "peculiar identifier"
- * symbols `+` and `-`, so the token has to be collected first and
- * classified afterward rather than picked apart char-by-char. */
+/* Dispatched when the first byte is '+' or '-' - these are shared between
+ * numbers (leading sign) and the two "peculiar identifier" symbols `+`
+ * and `-`, so the token has to be collected first and classified
+ * afterward rather than picked apart char-by-char. */
 static int parse_number_or_symbol(struct p_parser_impl *p, struct pnode *out) {
     size_t len;
     char *tok = collect_token(p, is_symbol_subsequent, &len);
     if (!tok) return fail(p, "out of memory");
 
     /* len is never 0 here: parse_value() only calls this after peeking a
-     * byte that already satisfies is_symbol_subsequent() ('.', '+', '-'
-     * are all in that set). */
+     * byte that already satisfies is_symbol_subsequent() ('+' and '-'
+     * are both in that set). */
 
     if (is_peculiar_symbol(tok, len)) {
         struct pnode node = pnode_make_nsymbol(tok, len);
@@ -497,8 +497,8 @@ static int parse_value(struct parse_ctx *ctx, struct pnode *out) {
     if (c == '[') return parse_list(ctx, out);
     if (c == '"') return parse_string(p, out);
     if (is_symbol_initial(c)) return parse_symbol(p, out);
-    if (c == '.' || c == '+' || c == '-') return parse_number_or_symbol(p, out);
-    if (c >= '0' && c <= '9') return parse_number(p, out);
+    if (c == '+' || c == '-') return parse_number_or_symbol(p, out);
+    if (c == '.' || (c >= '0' && c <= '9')) return parse_number(p, out);
     return fail(p, "unexpected character");
 }
 
