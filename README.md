@@ -3,10 +3,10 @@
 **AI-GENERATED CONTENT**
 
 A small C library for **P Expression**, an S-expression-like serialization
-format with five value types — nil, integers, reals, strings, and lists:
+format with five value types — integers, reals, strings, symbols, and lists:
 
 ```
-[1 2 [4 5 "str"]]
+[1 2 [4 5 "str"] a-symbol]
 ```
 
 It provides an in-memory value type (`struct pnode`), a serializer, a

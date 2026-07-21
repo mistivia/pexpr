@@ -65,18 +65,59 @@ static int emit_str(struct pbuf *out, const char *s, size_t len) {
     return pbuf_putc(out, '"');
 }
 
+static int is_letter(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+static int is_special_initial(unsigned char c) {
+    switch (c) {
+        case '!': case '$': case '%': case '&': case '*': case '/':
+        case ':': case '<': case '=': case '>': case '?': case '~':
+        case '_': case '^':
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* <initial> := <letter> | ! | $ | % | & | * | / | : | < | = | > | ? | ~ | _ | ^ */
+static int is_symbol_initial(unsigned char c) {
+    return is_letter(c) || is_special_initial(c);
+}
+
+/* <subsequent> := <initial> | <digit> | . | + | - | @ */
+static int is_symbol_subsequent(unsigned char c) {
+    return is_symbol_initial(c) || (c >= '0' && c <= '9') ||
+           c == '.' || c == '+' || c == '-' || c == '@';
+}
+
+static int is_peculiar_symbol(const char *s, size_t len) {
+    return len == 1 && (s[0] == '+' || s[0] == '-');
+}
+
+static int emit_symbol(struct pbuf *out, const char *s, size_t len) {
+    if (len == 0) return -1;
+    if (!is_peculiar_symbol(s, len)) {
+        if (!is_symbol_initial((unsigned char)s[0])) return -1;
+        for (size_t i = 1; i < len; i++) {
+            if (!is_symbol_subsequent((unsigned char)s[i])) return -1;
+        }
+    }
+    return pbuf_write(out, s, len);
+}
+
 static int emit_node(struct pbuf *out, const struct pnode *node) {
     if (!node || !pnode_ok(node)) return -1;
 
     switch (node->type) {
-        case PTYPE_NIL:
-            return pbuf_write(out, "nil", 3);
         case PTYPE_INTEG:
             return emit_integ(out, node->integ);
         case PTYPE_REAL:
             return emit_real(out, node->real);
         case PTYPE_STR:
             return emit_str(out, node->str, node->str_len);
+        case PTYPE_SYMBOL:
+            return emit_symbol(out, node->str, node->str_len);
         case PTYPE_LIST: {
             if (pbuf_putc(out, '[') != 0) return -1;
             for (size_t i = 0; i < node->list_len; i++) {

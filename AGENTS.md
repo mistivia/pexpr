@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 `pexpr` is a small C11 library implementing **P Expression**, an S-expression-like
-serialization format with five value types: nil, integers, reals, strings, and lists
-(e.g. `[1 2 [4 5 "str"]]`). It provides an in-memory value type (`struct pnode`), a
+serialization format with five value types: integers, reals, strings, symbols, and lists
+(e.g. `[1 2 [4 5 "str"] a-symbol]`). It provides an in-memory value type (`struct pnode`), a
 serializer, a one-shot parser, and a streaming (incremental-feed) parser.
 
 - `doc/FORMAT.md` — normative wire format spec, including design notes explaining
@@ -46,17 +46,27 @@ Link consumers against `build/debug/libpexpr.a` with `-Iinclude`.
 
 ### Value model: `struct pnode` is a plain value type, never heap-allocated itself
 
-This is the one invariant that shapes the whole API and is easy to violate by
-habit (e.g. reaching for a `pnode_free`/pointer-returning pattern). Every
-constructor (`pnode_make_nil`, `pnode_make_integ`, `pnode_make_real`,
-`pnode_make_str`, `pnode_make_cstr`, `pnode_make_list`, `pnode_copy`,
-`pexpr_parse`, `p_parser_get_result`) returns `struct pnode` **by value**. The library only
-ever heap-allocates what a node owns *internally* — a string's byte buffer, or
-a list's child array (`list`, sized `list_cap`, first `list_len` valid) — never
-the `struct pnode` wrapper. Consequently:
+This is the one invariant that shapes the whole API and is easy to
+violate by habit (e.g. reaching for a `pnode_free`/pointer-returning
+pattern). Every constructor (`pnode_make_integ`, `pnode_make_real`,
+`pnode_make_str`, `pnode_make_cstr`, `pnode_make_nsymbol`,
+`pnode_make_symbol`, `pnode_make_list`, `pnode_copy`, `pexpr_parse`,
+`p_parser_get_result`) returns `struct pnode` **by value**. The
+library only ever heap-allocates what a node owns *internally* — a
+string's or symbol's byte buffer, or a list's child array (`list`,
+sized `list_cap`, first `list_len` valid) — never the `struct pnode`
+wrapper. `PTYPE_SYMBOL` (a bareword matching `<initial> <subsequent>*`,
+or one of the peculiar identifiers `+`/`-`, e.g. `nil`, `set!`,
+`list->vector` — see `doc/FORMAT.md`) reuses the exact same
+`str`/`str_len` storage and construction/drop/copy code paths as
+`PTYPE_STR`; only `type`, case folding (symbols are case-insensitive:
+`pnode_make_symbol()`/`pnode_make_nsymbol()` and the parser lowercase
+uppercase ASCII letters before storing), and how the serializer emits
+it differ. Consequently:
 
 - Failure can't be signaled with `NULL`; it's signaled in-band via `pnode_ok()`
-  (false for a failed `pnode_make_str`/`pnode_make_cstr`/`pnode_copy`/parse).
+  (false for a failed `pnode_make_str`/`pnode_make_cstr`/`pnode_make_nsymbol`/
+  `pnode_make_symbol`/`pnode_copy`/parse).
 - `pnode_drop()` frees what a node owns and recurses into list children, but
   never frees `node` itself — callers own that storage (stack, array element).
   It's NULL-safe and idempotent.
@@ -135,3 +145,8 @@ get wrong when changing either side:
   (escapes everything outside printable ASCII `0x20`-`0x7e` as `\xhh`).
   Round-tripping through encode→decode is exact; decode→encode is not
   required to be.
+- `.`, `+`, and `-` start both numbers and the "peculiar identifier" symbols
+  `+`/`-` - `parse_number_or_symbol()` in `src/parser.c` collects the whole
+  token first (superset charset) and classifies it afterward, rather than
+  trying to disambiguate character-by-character, since the
+  streaming source may only have one byte available at a time.

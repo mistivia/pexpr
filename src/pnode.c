@@ -3,12 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct pnode pnode_make_nil(void) {
-    struct pnode node;
-    node.type = PTYPE_NIL;
-    return node;
-}
-
 struct pnode pnode_make_integ(int64_t v) {
     struct pnode node;
     node.type = PTYPE_INTEG;
@@ -45,6 +39,24 @@ struct pnode pnode_make_cstr(const char *s) {
     return pnode_make_str(s, strlen(s));
 }
 
+/* Symbols are case-insensitive: uppercase ASCII letters are folded to
+ * lowercase before storage, so "FOO" and "foo" end up byte-identical. */
+struct pnode pnode_make_nsymbol(const char *s, size_t len) {
+    struct pnode node = pnode_make_str(s, len);
+    node.type = PTYPE_SYMBOL;
+    if (node.str) {
+        char *buf = (char *)node.str;
+        for (size_t i = 0; i < len; i++) {
+            if (buf[i] >= 'A' && buf[i] <= 'Z') buf[i] = (char)(buf[i] - 'A' + 'a');
+        }
+    }
+    return node;
+}
+
+struct pnode pnode_make_symbol(const char *s) {
+    return pnode_make_nsymbol(s, strlen(s));
+}
+
 struct pnode pnode_make_list(void) {
     struct pnode node;
     node.type = PTYPE_LIST;
@@ -57,6 +69,7 @@ struct pnode pnode_make_list(void) {
 int pnode_ok(const struct pnode *node) {
     switch (node->type) {
         case PTYPE_STR:
+        case PTYPE_SYMBOL:
             return node->str != NULL;
         case PTYPE_LIST:
             return (node->list != NULL || node->list_len == 0) && node->list_len <= node->list_cap;
@@ -92,6 +105,7 @@ void pnode_drop(struct pnode *node) {
 
     switch (node->type) {
         case PTYPE_STR:
+        case PTYPE_SYMBOL:
             free((void *)node->str);
             node->str = NULL;
             node->str_len = 0;
@@ -117,15 +131,14 @@ struct pnode pnode_copy(const struct pnode *node) {
     copy.type = node->type;
 
     switch (node->type) {
-        case PTYPE_NIL:
-            return copy;
         case PTYPE_INTEG:
             copy.integ = node->integ;
             return copy;
         case PTYPE_REAL:
             copy.real = node->real;
             return copy;
-        case PTYPE_STR: {
+        case PTYPE_STR:
+        case PTYPE_SYMBOL: {
             char *buf = malloc(node->str_len + 1);
             if (!buf) {
                 copy.str = NULL;

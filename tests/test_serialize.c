@@ -13,11 +13,80 @@ static char *ser(const struct pnode *n) {
     return s;
 }
 
-static void test_nil(void) {
-    struct pnode n = pnode_make_nil();
+static void test_symbols(void) {
+    struct pnode n = pnode_make_symbol("nil");
     char *s = ser(&n);
     CHECK_STREQ(s, "nil");
     free(s);
+    pnode_drop(&n);
+
+    n = pnode_make_symbol("set!");
+    s = ser(&n);
+    CHECK_STREQ(s, "set!");
+    free(s);
+    pnode_drop(&n);
+
+    n = pnode_make_symbol("foo-bar_baz*?");
+    s = ser(&n);
+    CHECK_STREQ(s, "foo-bar_baz*?");
+    free(s);
+    pnode_drop(&n);
+
+    /* <special initial> bytes and <subsequent>-only bytes (digit, '.', '+',
+     * '-', '@') after the first byte. */
+    n = pnode_make_symbol("list->vector-1.0@x");
+    s = ser(&n);
+    CHECK_STREQ(s, "list->vector-1.0@x");
+    free(s);
+    pnode_drop(&n);
+
+    /* Peculiar identifiers: bare "+" and "-" serialize as themselves. */
+    n = pnode_make_symbol("+");
+    s = ser(&n);
+    CHECK_STREQ(s, "+");
+    free(s);
+    pnode_drop(&n);
+
+    n = pnode_make_symbol("-");
+    s = ser(&n);
+    CHECK_STREQ(s, "-");
+    free(s);
+    pnode_drop(&n);
+
+    /* Uppercase is folded to lowercase at construction time, so what gets
+     * serialized is already lowercase regardless of the input case. */
+    n = pnode_make_symbol("NIL");
+    s = ser(&n);
+    CHECK_STREQ(s, "nil");
+    free(s);
+    pnode_drop(&n);
+
+    n = pnode_make_symbol("Set!");
+    s = ser(&n);
+    CHECK_STREQ(s, "set!");
+    free(s);
+    pnode_drop(&n);
+
+    /* Doesn't match <initial> <subsequent>* and isn't a peculiar identifier
+     * -> encode error, same treatment as a NaN/Inf real. */
+    n = pnode_make_symbol("1abc"); /* digit can't start a symbol */
+    CHECK(pexpr_serialize(&n, NULL) == NULL);
+    pnode_drop(&n);
+
+    n = pnode_make_symbol("");
+    CHECK(pexpr_serialize(&n, NULL) == NULL);
+    pnode_drop(&n);
+
+    n = pnode_make_symbol("bad symbol");
+    CHECK(pexpr_serialize(&n, NULL) == NULL);
+    pnode_drop(&n);
+
+    n = pnode_make_symbol("..."); /* "..." isn't a supported peculiar symbol */
+    CHECK(pexpr_serialize(&n, NULL) == NULL);
+    pnode_drop(&n);
+
+    n = pnode_make_symbol("+abc"); /* '+' only stands alone */
+    CHECK(pexpr_serialize(&n, NULL) == NULL);
     pnode_drop(&n);
 }
 
@@ -167,7 +236,7 @@ static void test_serialize_null(void) {
 static void test_serialize_invalid_node(void) {
     /* A failed pexpr_parse()/pnode_copy() result embedded in a list must
      * not crash serialization - it has no valid content to walk. */
-    struct pnode bad = pexpr_parse("garbage", 7);
+    struct pnode bad = pexpr_parse("@garbage", 8);
     CHECK(!pnode_ok(&bad));
     CHECK(pexpr_serialize(&bad, NULL) == NULL);
     pnode_drop(&bad);
@@ -180,7 +249,7 @@ static void test_serialize_invalid_node(void) {
 }
 
 void run_serialize_tests(void) {
-    test_nil();
+    test_symbols();
     test_integers();
     test_reals();
     test_string_escapes();

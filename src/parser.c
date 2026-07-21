@@ -304,12 +304,134 @@ static int parse_number(struct p_parser_impl *p, struct pnode *out) {
     return 1; /* pnode_make_integ()/pnode_make_real() never fail */
 }
 
-static int parse_nil(struct p_parser_impl *p, struct pnode *out) {
+static int is_letter(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+static int is_special_initial(unsigned char c) {
+    switch (c) {
+        case '!': case '$': case '%': case '&': case '*': case '/':
+        case ':': case '<': case '=': case '>': case '?': case '~':
+        case '_': case '^':
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* <initial> := <letter> | ! | $ | % | & | * | / | : | < | = | > | ? | ~ | _ | ^ */
+static int is_symbol_initial(unsigned char c) {
+    return is_letter(c) || is_special_initial(c);
+}
+
+/* <subsequent> := <initial> | <digit> | . | + | - | @ */
+static int is_symbol_subsequent(unsigned char c) {
+    return is_symbol_initial(c) || (c >= '0' && c <= '9') ||
+           c == '.' || c == '+' || c == '-' || c == '@';
+}
+
+/* Reads a token via `pbuf`, using `is_char` to decide which bytes belong to
+ * it. Shared by parse_symbol() and parse_number_or_symbol() - both just
+ * greedily collect bytes and classify the result afterward. Returns NULL
+ * on allocation failure (either mid-collection or at release); the caller
+ * reports that uniformly, same as every other token reader in this file. */
+static char *collect_token(struct p_parser_impl *p, int (*is_char)(unsigned char), size_t *out_len) {
+    struct pbuf buf = {0};
+    pbuf_init(&buf);
+    p->active_buf = &buf;
+
     unsigned char c;
-    if (!pk_getc(p, &c) || c != 'n') return fail(p, "expected 'nil'");
-    if (!pk_getc(p, &c) || c != 'i') return fail(p, "expected 'nil'");
-    if (!pk_getc(p, &c) || c != 'l') return fail(p, "expected 'nil'");
-    *out = pnode_make_nil();
+    while (pk_peek(p, &c) && is_char(c)) {
+        if (pbuf_putc(&buf, (char)c) != 0) {
+            p->active_buf = NULL;
+            pbuf_free(&buf);
+            return NULL;
+        }
+        pk_advance(p);
+    }
+
+    char *tok = pbuf_release(&buf, out_len);
+    p->active_buf = NULL;
+    return tok;
+}
+
+/* Dispatched when the first byte is a letter or a <special initial> byte -
+ * unambiguously the start of <initial> <subsequent>*, never a number. */
+static int parse_symbol(struct p_parser_impl *p, struct pnode *out) {
+    size_t len;
+    char *tok = collect_token(p, is_symbol_subsequent, &len);
+    if (!tok) return fail(p, "out of memory");
+
+    /* len is never 0 here: parse_value() only calls parse_symbol() after
+     * peeking a byte that already satisfies is_symbol_initial(), a subset
+     * of is_symbol_subsequent(). */
+
+    struct pnode node = pnode_make_nsymbol(tok, len);
+    free(tok);
+    if (!pnode_ok(&node)) return fail(p, "out of memory");
+
+    *out = node;
+    return 1;
+}
+
+static int is_peculiar_symbol(const char *tok, size_t len) {
+    return len == 1 && (tok[0] == '+' || tok[0] == '-');
+}
+
+/* Dispatched when the first byte is '.', '+', or '-' - these are shared
+ * between numbers (leading sign/dot) and the two "peculiar identifier"
+ * symbols `+` and `-`, so the token has to be collected first and
+ * classified afterward rather than picked apart char-by-char. */
+static int parse_number_or_symbol(struct p_parser_impl *p, struct pnode *out) {
+    size_t len;
+    char *tok = collect_token(p, is_symbol_subsequent, &len);
+    if (!tok) return fail(p, "out of memory");
+
+    /* len is never 0 here: parse_value() only calls this after peeking a
+     * byte that already satisfies is_symbol_subsequent() ('.', '+', '-'
+     * are all in that set). */
+
+    if (is_peculiar_symbol(tok, len)) {
+        struct pnode node = pnode_make_nsymbol(tok, len);
+        free(tok);
+        if (!pnode_ok(&node)) return fail(p, "out of memory");
+        *out = node;
+        return 1;
+    }
+
+    for (size_t i = 0; i < len; i++) {
+        if (!is_num_char((unsigned char)tok[i])) {
+            free(tok);
+            return fail(p, "invalid number literal");
+        }
+    }
+
+    int is_float = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (tok[i] == '.' || tok[i] == 'e' || tok[i] == 'E') {
+            is_float = 1;
+            break;
+        }
+    }
+
+    char *end = NULL;
+    errno = 0;
+    if (is_float) {
+        double v = strtod(tok, &end);
+        if (end != tok + len || errno == ERANGE) {
+            free(tok);
+            return fail(p, "invalid number literal");
+        }
+        *out = pnode_make_real(v);
+    } else {
+        long long v = strtoll(tok, &end, 10);
+        if (end != tok + len || errno == ERANGE) {
+            free(tok);
+            return fail(p, "invalid number literal");
+        }
+        *out = pnode_make_integ((int64_t)v);
+    }
+    free(tok);
     return 1;
 }
 
@@ -374,8 +496,9 @@ static int parse_value(struct parse_ctx *ctx, struct pnode *out) {
 
     if (c == '[') return parse_list(ctx, out);
     if (c == '"') return parse_string(p, out);
-    if (c == 'n') return parse_nil(p, out);
-    if (c == '.' || c == '-' || c == '+' || (c >= '0' && c <= '9')) return parse_number(p, out);
+    if (is_symbol_initial(c)) return parse_symbol(p, out);
+    if (c == '.' || c == '+' || c == '-') return parse_number_or_symbol(p, out);
+    if (c >= '0' && c <= '9') return parse_number(p, out);
     return fail(p, "unexpected character");
 }
 

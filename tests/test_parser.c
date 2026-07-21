@@ -8,17 +8,106 @@ static struct pnode parse(const char *s) {
     return pexpr_parse(s, strlen(s));
 }
 
-static void test_parse_nil(void) {
+static void test_parse_symbols(void) {
     struct pnode n = parse("nil");
-    CHECK(pnode_ok(&n) && n.type == PTYPE_NIL);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 3);
+    CHECK(memcmp(n.str, "nil", 3) == 0);
     pnode_drop(&n);
 
     n = parse("[nil 1 nil]");
     CHECK(pnode_ok(&n) && n.type == PTYPE_LIST);
     CHECK_EQ_LL(pnode_list_len(&n), 3);
-    CHECK(n.list[0].type == PTYPE_NIL);
+    CHECK(n.list[0].type == PTYPE_SYMBOL);
     CHECK(n.list[1].type == PTYPE_INTEG);
-    CHECK(n.list[2].type == PTYPE_NIL);
+    CHECK(n.list[2].type == PTYPE_SYMBOL);
+    pnode_drop(&n);
+
+    n = parse("foo-bar_baz*?!");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 14);
+    CHECK(memcmp(n.str, "foo-bar_baz*?!", 14) == 0);
+    pnode_drop(&n);
+
+    /* Now that nil is just a symbol, any bareword matching the grammar
+     * parses fine, including former "not nil" edge cases. */
+    n = parse("ni");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 2);
+    pnode_drop(&n);
+
+    n = parse("nix");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 3);
+    pnode_drop(&n);
+
+    n = parse("garbage");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 7);
+    pnode_drop(&n);
+
+    /* A symbol stops at the first byte outside the grammar, here the ']'. */
+    n = parse("[ab! cd]");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_LIST);
+    CHECK_EQ_LL(pnode_list_len(&n), 2);
+    CHECK(n.list[0].type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.list[0].str_len, 3);
+    CHECK(memcmp(n.list[0].str, "ab!", 3) == 0);
+    pnode_drop(&n);
+
+    /* Every <special initial> byte can start a symbol. */
+    {
+        const char *sym = "<foo?>=/*&%$~^:baz";
+        n = parse(sym);
+        CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+        CHECK_EQ_LL(n.str_len, strlen(sym));
+        CHECK(memcmp(n.str, sym, strlen(sym)) == 0);
+        pnode_drop(&n);
+    }
+
+    /* <subsequent> additionally allows digits, '.', '+', '-', '@' after the
+     * first byte. */
+    {
+        const char *sym = "list->vector-1.0@x";
+        n = parse(sym);
+        CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+        CHECK_EQ_LL(n.str_len, strlen(sym));
+        CHECK(memcmp(n.str, sym, strlen(sym)) == 0);
+        pnode_drop(&n);
+    }
+
+    /* Peculiar identifiers: a bare "+" or "-" is a symbol, not a malformed
+     * number. */
+    n = parse("+");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 1);
+    CHECK(n.str[0] == '+');
+    pnode_drop(&n);
+
+    n = parse("-");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 1);
+    CHECK(n.str[0] == '-');
+    pnode_drop(&n);
+
+    n = parse("[+ -]");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_LIST);
+    CHECK_EQ_LL(pnode_list_len(&n), 2);
+    CHECK(n.list[0].type == PTYPE_SYMBOL);
+    CHECK(n.list[1].type == PTYPE_SYMBOL);
+    pnode_drop(&n);
+
+    /* Symbols are case-insensitive: uppercase letters fold to lowercase. */
+    n = parse("NIL");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 3);
+    CHECK(memcmp(n.str, "nil", 3) == 0);
+    pnode_drop(&n);
+
+    n = parse("Set!");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 4);
+    CHECK(memcmp(n.str, "set!", 4) == 0);
     pnode_drop(&n);
 }
 
@@ -158,14 +247,15 @@ static void test_parse_errors(void) {
     n = parse("\"unterminated"); CHECK(!pnode_ok(&n)); pnode_drop(&n);
     n = parse("\"bad\\qescape\""); CHECK(!pnode_ok(&n)); pnode_drop(&n);
     n = parse("\"bad\\x1\""); CHECK(!pnode_ok(&n)); pnode_drop(&n);
-    n = parse("garbage"); CHECK(!pnode_ok(&n)); pnode_drop(&n);
+    n = parse("@garbage"); CHECK(!pnode_ok(&n)); pnode_drop(&n); /* '@' isn't a symbol-initial byte */
     n = parse("]"); CHECK(!pnode_ok(&n)); pnode_drop(&n);
-    n = parse("-"); CHECK(!pnode_ok(&n)); pnode_drop(&n);
-    n = parse("."); CHECK(!pnode_ok(&n)); pnode_drop(&n);
+    n = parse("."); CHECK(!pnode_ok(&n)); pnode_drop(&n);       /* bare '.' is not a valid number */
+    n = parse(".."); CHECK(!pnode_ok(&n)); pnode_drop(&n);      /* "..." isn't a supported peculiar symbol */
+    n = parse("..."); CHECK(!pnode_ok(&n)); pnode_drop(&n);
+    n = parse("+abc"); CHECK(!pnode_ok(&n)); pnode_drop(&n);    /* '+' only stands alone, not as an initial */
+    n = parse("-abc"); CHECK(!pnode_ok(&n)); pnode_drop(&n);
     n = parse("1.2.3"); CHECK(!pnode_ok(&n)); pnode_drop(&n); /* strtod stops early -> trailing junk */
     n = parse("1e"); CHECK(!pnode_ok(&n)); pnode_drop(&n);    /* exponent marker with no digits */
-    n = parse("ni"); CHECK(!pnode_ok(&n)); pnode_drop(&n);    /* truncated nil literal */
-    n = parse("nix"); CHECK(!pnode_ok(&n)); pnode_drop(&n);   /* not the nil literal */
 }
 
 static void test_parse_deep_nesting(void) {
@@ -198,7 +288,8 @@ static void test_round_trip(void) {
     const char *inputs[] = {
         "0", "-1", "123456789", "1.5", "-3.25e+10", "\"a\\nb\"",
         "[1 2 3]", "[]", "[[1] [2] [[3]]]", "[\"x\" 1 2.5 [\"y\"]]",
-        "nil", ".5", "-.25", "[nil 1 nil]",
+        "nil", ".5", "-.25", "[nil 1 nil]", "set!", "foo-bar_baz*?!",
+        "+", "-", "list->vector", "[+ -]",
     };
     for (size_t i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++) {
         struct pnode n1 = parse(inputs[i]);
@@ -224,7 +315,7 @@ static void test_round_trip(void) {
 }
 
 void run_parser_tests(void) {
-    test_parse_nil();
+    test_parse_symbols();
     test_parse_integers();
     test_parse_reals();
     test_parse_strings();

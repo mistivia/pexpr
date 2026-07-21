@@ -30,18 +30,60 @@ static void test_stream_byte_by_byte_list(void) {
     p_parser_destroy(&p);
 }
 
-static void test_stream_nil_self_delimits(void) {
-    /* Unlike a bare number, "nil" is a fixed-length literal - it completes
-     * as soon as the third byte is fed, without needing an EOF signal. */
+static void test_stream_bare_symbol_needs_eof(void) {
+    /* Like a bare number, a top-level symbol is read greedily and has no
+     * closing delimiter, so it needs an explicit EOF signal to complete. */
     struct p_parser p;
     CHECK_EQ_LL(p_parser_init(&p), 0);
 
     CHECK(p_parser_feed(&p, 1, "n") == P_PARSER_PAUSE);
     CHECK(p_parser_feed(&p, 1, "i") == P_PARSER_PAUSE);
-    CHECK(p_parser_feed(&p, 1, "l") == P_PARSER_SUCC);
+    CHECK(p_parser_feed(&p, 1, "l") == P_PARSER_PAUSE);
+    CHECK(p_parser_feed(&p, 0, NULL) == P_PARSER_SUCC);
 
     struct pnode n = p_parser_get_result(&p);
-    CHECK(pnode_ok(&n) && n.type == PTYPE_NIL);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 3);
+    CHECK(memcmp(n.str, "nil", 3) == 0);
+    pnode_drop(&n);
+
+    p_parser_destroy(&p);
+}
+
+static void test_stream_symbol_in_list_self_delimits(void) {
+    /* Inside a list, the following ']' delimits the symbol without an
+     * explicit EOF signal being needed. */
+    struct p_parser p;
+    CHECK_EQ_LL(p_parser_init(&p), 0);
+
+    CHECK(p_parser_feed(&p, 1, "[") == P_PARSER_PAUSE);
+    CHECK(p_parser_feed(&p, 1, "n") == P_PARSER_PAUSE);
+    CHECK(p_parser_feed(&p, 1, "i") == P_PARSER_PAUSE);
+    CHECK(p_parser_feed(&p, 1, "l") == P_PARSER_PAUSE);
+    CHECK(p_parser_feed(&p, 1, "]") == P_PARSER_SUCC);
+
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_LIST);
+    CHECK_EQ_LL(pnode_list_len(&n), 1);
+    CHECK(n.list[0].type == PTYPE_SYMBOL);
+    pnode_drop(&n);
+
+    p_parser_destroy(&p);
+}
+
+static void test_stream_peculiar_symbol_needs_eof(void) {
+    /* A bare "+" or "-" is ambiguous with the start of a number until more
+     * input (or EOF) arrives - same reasoning as a bare number token. */
+    struct p_parser p;
+    CHECK_EQ_LL(p_parser_init(&p), 0);
+
+    CHECK(p_parser_feed(&p, 1, "+") == P_PARSER_PAUSE);
+    CHECK(p_parser_feed(&p, 0, NULL) == P_PARSER_SUCC);
+
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 1);
+    CHECK(n.str[0] == '+');
     pnode_drop(&n);
 
     p_parser_destroy(&p);
@@ -126,7 +168,7 @@ static void test_stream_fail(void) {
     struct p_parser p;
     CHECK_EQ_LL(p_parser_init(&p), 0);
 
-    enum p_parser_state st = p_parser_feed(&p, 7, "garbage");
+    enum p_parser_state st = p_parser_feed(&p, 8, "@garbage");
     CHECK(st == P_PARSER_FAIL);
     CHECK(strlen(p_parser_errmsg(&p)) > 0);
 
@@ -235,7 +277,9 @@ static void test_stream_large_chunks(void) {
 
 void run_stream_tests(void) {
     test_stream_byte_by_byte_list();
-    test_stream_nil_self_delimits();
+    test_stream_bare_symbol_needs_eof();
+    test_stream_symbol_in_list_self_delimits();
+    test_stream_peculiar_symbol_needs_eof();
     test_stream_leading_dot_real_needs_eof();
     test_stream_bare_number_needs_eof();
     test_stream_real_needs_eof();

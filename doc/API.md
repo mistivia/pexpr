@@ -6,18 +6,29 @@ see `doc/FORMAT.md` for the wire format itself.
 ## Values
 
 ```c
-enum ptype { PTYPE_NIL, PTYPE_INTEG, PTYPE_REAL, PTYPE_STR, PTYPE_LIST };
+enum ptype { PTYPE_INTEG, PTYPE_REAL, PTYPE_STR, PTYPE_SYMBOL, PTYPE_LIST };
 
 struct pnode {
     enum ptype type;
     union {
         int64_t integ;
         double real;
-        struct { size_t str_len; const char *str; };
+        struct { size_t str_len; const char *str; }; /* shared by PTYPE_STR and PTYPE_SYMBOL */
         struct { size_t list_len; size_t list_cap; struct pnode *list; }; /* array, by value */
     };
 };
 ```
+
+`PTYPE_SYMBOL` is a bareword matching `<initial> <subsequent>*`, or one of
+the two peculiar identifiers `+`, `-` (e.g. `nil`, `set!`,
+`foo-bar`, `list->vector`) - see `doc/FORMAT.md` for the full grammar.
+There's no separate nil type, `nil` is just an ordinary symbol. Symbols
+are case-insensitive: uppercase ASCII letters are folded to lowercase by
+`pnode_make_symbol()`/`pnode_make_nsymbol()` and by the parser, so `"NIL"`
+and `"nil"` are stored identically. `PTYPE_SYMBOL` is stored exactly like
+`PTYPE_STR` (same `str`/`str_len` fields, built and dropped the same way);
+only `type`, the case folding, and how it's serialized (no quotes, no
+escaping) differ.
 
 `struct pnode` is a plain value type: nothing in this library ever
 allocates the struct itself, so you own its storage (a local variable, a
@@ -37,7 +48,7 @@ Because elements are values, `node->list[i]` is a
 ### Building values
 
 ```c
-struct pnode nil = pnode_make_nil();
+struct pnode nilsym = pnode_make_symbol("nil");
 struct pnode n = pnode_make_integ(42);
 struct pnode s = pnode_make_str("hi", 2);   /* copies the bytes */
 struct pnode s2 = pnode_make_cstr("hi");    /* same, len = strlen(s) */
@@ -53,13 +64,14 @@ int64_t second = list.list[1].integ;         /* 2 */
 pnode_drop(&list);                           /* releases everything list owns */
 pnode_drop(&n);
 pnode_drop(&s2);
-pnode_drop(&nil);
+pnode_drop(&nilsym);
 ```
 
-`pnode_make_nil()`/`pnode_make_integ()`/`pnode_make_real()`/`pnode_make_list()` never fail
+`pnode_make_integ()`/`pnode_make_real()`/`pnode_make_list()` never fail
 (they don't allocate anything up front). `pnode_make_str()`/
-`pnode_make_cstr()` do allocate a copy of the bytes immediately, so they
-*can* fail - check with `pnode_ok()`:
+`pnode_make_cstr()`/`pnode_make_nsymbol()`/`pnode_make_symbol()` do
+allocate a copy of the bytes immediately, so they *can* fail - check with
+`pnode_ok()`:
 
 ```c
 struct pnode s = pnode_make_str(huge_buf, huge_len);
@@ -120,7 +132,8 @@ free(text);
 `out_len` may be `NULL` if you don't need it (the buffer is NUL-terminated
 regardless). Serialization fails (`NULL`) for a `NULL` node, a node for
 which `pnode_ok()` is false anywhere in the tree, a NaN/Inf `double`
-anywhere in the tree, or on allocation failure.
+anywhere in the tree, a `PTYPE_SYMBOL` whose bytes don't match the symbol
+grammar (see `doc/FORMAT.md`), or on allocation failure.
 
 ## Parsing a complete buffer
 

@@ -1,10 +1,10 @@
 # The P Expression Format
 
 P Expression (pexpr) is a small S-expression-like serialization format with
-five value types: nil, integers, reals, strings, and lists.
+five value types: integers, reals, strings, symbols, and lists.
 
 ```
-[1 2 [4 5 "str"]]
+[1 2 [4 5 "str"] a-symbol]
 ```
 
 This document is the normative description of the wire format. Where the
@@ -13,7 +13,6 @@ along with the choice this implementation makes.
 
 ## Values
 
-- **Nil** — the bareword `nil`. Carries no data.
 - **Integer** — decimal, base 10, optional leading `-`. No scientific
   notation, no leading `+` in encoder output (the parser accepts a leading
   `+` when reading, see "Parsing" below).
@@ -21,6 +20,13 @@ along with the choice this implementation makes.
   `-2.5e-03`, `0e+00`. NaN and infinity have no representation in this
   format; encoding one is an error.
 - **String** — `"..."`, see below.
+- **Symbol** — a bareword matching `<initial> <subsequent>*`, or one of the
+  two "peculiar identifiers" `+`, `-`, e.g. `nil`, `foo-bar`, `set!`,
+  `list->vector`. See "Symbols" below for the full grammar. Symbols are
+  case-insensitive: `NIL` and `nil` are the same value, normalized to
+  lowercase in storage. Encoding a value whose bytes don't match the
+  grammar (including the empty string) is an error, the same treatment as
+  a NaN/Inf real.
 - **List** — `[...]`, elements separated by a single space, e.g.
   `[1 2 [4 5 "str"]]`. No trailing separator, no comma.
 
@@ -70,6 +76,37 @@ must still parse cleanly as a whole under `strtod`/`strtoll` (trailing junk
 like `1.2.3` or `1e` with no exponent digits is a syntax error, and so is a
 bare `.` with no digits at all).
 
+## Symbols
+
+```
+<symbol>     := <initial> <subsequent>* | + | -
+<initial>    := <letter> | ! | $ | % | & | * | / | : | < | = | > | ? | ~ | _ | ^
+<subsequent> := <initial> | <digit> | . | + | - | @
+<letter>     := a | b | ... | z | A | B | ... | Z
+<digit>      := 0 | 1 | ... | 9
+```
+
+A symbol is either an `<initial>` byte followed by zero or more
+`<subsequent>` bytes, or one of exactly two "peculiar identifiers": a bare
+`+` or a bare `-` — these would otherwise be indistinguishable from the
+start of a number, so they're carved out as their own tokens; nothing
+else starting with `+` or `-` other than an actual number is valid (e.g.
+`+abc` and `-abc` are syntax errors). A bare `.` (or any other dot-only
+token such as `..` or `...`) is likewise not a valid symbol — a leading
+`.` is only ever the start of a leading-dot real like `.5`.
+
+**Case folding**: symbols are case-insensitive. Uppercase ASCII letters
+(`A`-`Z`) anywhere in the token — whether from parsing or from
+`pnode_make_symbol()`/`pnode_make_nsymbol()` — are folded to lowercase
+before being stored, so `NIL`, `Nil`, and `nil` all end up as the
+identical stored bytes `nil`. Encoding therefore always emits lowercase.
+
+Like a bare number, a symbol has no closing delimiter of its own (this
+includes the peculiar identifiers `+`/`-`, since a `+` could still be the
+start of a longer number), so a streaming parse of a top-level symbol
+needs an explicit end-of-input signal (or a following delimiter such as
+`]` or whitespace) before it's known to be complete.
+
 ## Lists
 
 `[` and `]` delimit a list. Elements are read until `]`; between elements,
@@ -84,16 +121,18 @@ The original design (see `DESIGN` in the repository history) left a few
 details implicit; this is what the implementation does and why:
 
 - **`struct pnode` is a value type across the entire public API,
-  including the parser.** `pnode_make_nil()`/`pnode_make_integ()`/
+  including the parser.** `pnode_make_integ()`/
   `pnode_make_real()`/`pnode_make_str()`/`pnode_make_cstr()`/
+  `pnode_make_nsymbol()`/`pnode_make_symbol()`/
   `pnode_make_list()`/`pnode_copy()`/`pexpr_parse()`/
   `p_parser_get_result()` all return
   `struct pnode` directly rather than a heap-allocated pointer, and
   `pnode_list_append()`'s `child` parameter is a value too (moved into
   the list's array on success). This library never allocates the
   `struct pnode` wrapper itself anywhere - only what a
-  `PTYPE_STR`/`PTYPE_LIST` value owns internally (a string's bytes, a
-  list's child array) is heap memory, and only the functions that touch
+  `PTYPE_STR`/`PTYPE_SYMBOL`/`PTYPE_LIST` value owns internally (a
+  string's or symbol's bytes, a list's child array) is heap memory, and
+  only the functions that touch
   that memory can fail (`pnode_make_str()`/`pnode_make_cstr()`,
   `pnode_copy()`, and the parser on a syntax error or internal
   allocation failure). Since failure can no longer be signaled with a

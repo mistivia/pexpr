@@ -3,16 +3,42 @@
 
 #include <string.h>
 
-static void test_nil(void) {
-    struct pnode n = pnode_make_nil();
-    CHECK(n.type == PTYPE_NIL);
+static void test_symbol(void) {
+    struct pnode n = pnode_make_nsymbol("hello", 5);
     CHECK(pnode_ok(&n));
+    CHECK(n.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(n.str_len, 5);
+    CHECK(memcmp(n.str, "hello", 5) == 0);
     pnode_drop(&n);
 
-    struct pnode c = pnode_copy(&n);
+    struct pnode nilsym = pnode_make_symbol("nil");
+    CHECK(pnode_ok(&nilsym));
+    CHECK(nilsym.type == PTYPE_SYMBOL);
+    CHECK_EQ_LL(nilsym.str_len, 3);
+    CHECK(memcmp(nilsym.str, "nil", 3) == 0);
+
+    struct pnode c = pnode_copy(&nilsym);
     CHECK(pnode_ok(&c));
-    CHECK(c.type == PTYPE_NIL);
+    CHECK(c.type == PTYPE_SYMBOL);
+    CHECK(c.str != nilsym.str);
+    CHECK(memcmp(c.str, "nil", 3) == 0);
     pnode_drop(&c);
+    pnode_drop(&nilsym);
+
+    /* Symbols are case-insensitive: uppercase ASCII letters fold to
+     * lowercase at construction time, so byte-content-wise "NIL" and "nil"
+     * are indistinguishable once stored. */
+    struct pnode upper = pnode_make_symbol("NIL");
+    CHECK(pnode_ok(&upper));
+    CHECK_EQ_LL(upper.str_len, 3);
+    CHECK(memcmp(upper.str, "nil", 3) == 0);
+    pnode_drop(&upper);
+
+    struct pnode mixed = pnode_make_nsymbol("Set!Foo_1", 9);
+    CHECK(pnode_ok(&mixed));
+    CHECK_EQ_LL(mixed.str_len, 9);
+    CHECK(memcmp(mixed.str, "set!foo_1", 9) == 0);
+    pnode_drop(&mixed);
 
     /* NULL-safe/idempotent drop, same as every other type. */
     pnode_drop(&n);
@@ -231,7 +257,7 @@ static void test_misuse(void) {
 }
 
 void run_pnode_tests(void) {
-    test_nil();
+    test_symbol();
     test_integ();
     test_real();
     test_str();
