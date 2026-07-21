@@ -115,6 +115,15 @@ ever emits single ASCII spaces; the decoder accepts the wider whitespace
 set and multiple/mixed occurrences of it, including none between a value
 and a following `]`).
 
+## Comments
+
+Outside of a string literal, `;` starts a comment that runs through (but
+not including) the next `\n`, or through end of input if none follows;
+the decoder discards it as if it were whitespace, and the `\n` itself is
+left in place to act as an ordinary separator. Comments are a decode-only
+convenience — the encoder never emits them, and `;` inside a string is
+just a literal byte, not a comment marker.
+
 ## Design notes
 
 The original design (see `DESIGN` in the repository history) left a few

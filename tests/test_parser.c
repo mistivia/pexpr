@@ -239,6 +239,36 @@ static void test_parse_list_lenient_separators(void) {
     pnode_drop(&n);
 }
 
+static void test_parse_comments(void) {
+    struct pnode n = parse("1 ; trailing comment\n");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_INTEG);
+    CHECK_EQ_LL(n.integ, 1);
+    pnode_drop(&n);
+
+    n = parse("; leading comment\n42");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_INTEG);
+    CHECK_EQ_LL(n.integ, 42);
+    pnode_drop(&n);
+
+    n = parse("42 ; comment with no trailing newline");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_INTEG);
+    CHECK_EQ_LL(n.integ, 42);
+    pnode_drop(&n);
+
+    n = parse("[1 2 ;comment\n 3]");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_LIST);
+    CHECK_EQ_LL(pnode_list_len(&n), 3);
+    CHECK_EQ_LL(n.list[2].integ, 3);
+    pnode_drop(&n);
+
+    /* ';' inside a string is not a comment marker. */
+    n = parse("\"a;b\"");
+    CHECK(pnode_ok(&n) && n.type == PTYPE_STR);
+    CHECK_EQ_LL(n.str_len, 3);
+    CHECK(memcmp(n.str, "a;b", 3) == 0);
+    pnode_drop(&n);
+}
+
 static void test_parse_errors(void) {
     struct pnode n;
 
@@ -321,6 +351,7 @@ void run_parser_tests(void) {
     test_parse_strings();
     test_parse_list_example_from_design();
     test_parse_list_lenient_separators();
+    test_parse_comments();
     test_parse_errors();
     test_parse_deep_nesting();
     test_round_trip();

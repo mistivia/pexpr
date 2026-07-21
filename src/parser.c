@@ -21,6 +21,13 @@ struct p_parser_impl {
     size_t in_pos;
     int eof;
 
+    /* Comment-skipping state, persisted across feed() chunks so a comment
+     * that straddles a chunk boundary keeps being skipped on resume.
+     * in_string suppresses comment skipping while parse_string() is
+     * collecting a string's contents. */
+    int in_comment;
+    int in_string;
+
     int parse_ok; /* set by the coroutine entry point when it finishes */
     struct pnode result;
     int result_taken; /* true once p_parser_get_result() has moved `result` out */
@@ -96,15 +103,33 @@ struct parse_ctx {
  * hasn't signaled end of input yet.
  * ------------------------------------------------------------------ */
 
-/* Peeks without consuming; returns 0 once permanently exhausted (EOF). */
+/* Peeks without consuming; returns 0 once permanently exhausted (EOF).
+ * Transparently skips comments (';' through the byte before the next
+ * '\n', which is left in place) outside of string literals. */
 static int pk_peek(struct p_parser_impl *p, unsigned char *out) {
     for (;;) {
-        if (p->in_pos < p->in_len) {
-            *out = (unsigned char)p->in_buf[p->in_pos];
-            return 1;
+        if (p->in_pos >= p->in_len) {
+            if (p->eof) return 0;
+            mco_yield(mco_running());
+            continue;
         }
-        if (p->eof) return 0;
-        mco_yield(mco_running());
+        unsigned char c = (unsigned char)p->in_buf[p->in_pos];
+        if (p->in_comment) {
+            if (c == '\n') {
+                p->in_comment = 0;
+                *out = c;
+                return 1;
+            }
+            p->in_pos++;
+            continue;
+        }
+        if (!p->in_string && c == ';') {
+            p->in_pos++;
+            p->in_comment = 1;
+            continue;
+        }
+        *out = c;
+        return 1;
     }
 }
 
@@ -153,6 +178,7 @@ static int parse_value(struct parse_ctx *ctx, struct pnode *out);
  * parse_string()/parse_number(). */
 static int buf_fail(struct p_parser_impl *p, struct pbuf *buf, const char *msg) {
     p->active_buf = NULL;
+    p->in_string = 0;
     pbuf_free(buf);
     return fail(p, msg);
 }
@@ -164,6 +190,7 @@ static int parse_string(struct p_parser_impl *p, struct pnode *out) {
     struct pbuf buf = {0};
     pbuf_init(&buf);
     p->active_buf = &buf;
+    p->in_string = 1;
 
     for (;;) {
         if (!pk_getc(p, &c)) {
@@ -210,6 +237,7 @@ static int parse_string(struct p_parser_impl *p, struct pnode *out) {
         }
     }
 
+    p->in_string = 0;
     size_t len;
     char *s = pbuf_release(&buf, &len);
     p->active_buf = NULL;
@@ -490,6 +518,8 @@ static void reset_fields(struct p_parser_impl *p) {
     p->in_len = 0;
     p->in_pos = 0;
     p->eof = 0;
+    p->in_comment = 0;
+    p->in_string = 0;
     p->parse_ok = 0;
     p->result_taken = 0;
     p->errmsg[0] = '\0';

@@ -321,6 +321,30 @@ static void test_stream_chunked_escape(void) {
     p_parser_destroy(&p);
 }
 
+static void test_stream_chunked_comment(void) {
+    struct p_parser p;
+    CHECK_EQ_LL(p_parser_init(&p), 0);
+
+    /* Comment starts in one chunk and its terminating '\n' arrives in a
+     * later chunk; in_comment state must survive the yield in between. */
+    const char *chunks[] = {"[1 ;this is a lon", "g comment\n 2 3]"};
+    enum p_parser_state st = P_PARSER_PAUSE;
+    for (size_t i = 0; i < sizeof(chunks) / sizeof(chunks[0]); i++) {
+        st = p_parser_feed(&p, strlen(chunks[i]), chunks[i]);
+    }
+    CHECK(st == P_PARSER_SUCC);
+
+    struct pnode n = p_parser_get_result(&p);
+    CHECK(pnode_ok(&n) && n.type == PTYPE_LIST);
+    CHECK_EQ_LL(pnode_list_len(&n), 3);
+    CHECK_EQ_LL(n.list[0].integ, 1);
+    CHECK_EQ_LL(n.list[1].integ, 2);
+    CHECK_EQ_LL(n.list[2].integ, 3);
+    pnode_drop(&n);
+
+    p_parser_destroy(&p);
+}
+
 static void test_stream_chunked_utf8(void) {
     struct p_parser p;
     CHECK_EQ_LL(p_parser_init(&p), 0);
@@ -378,6 +402,7 @@ void run_stream_tests(void) {
     test_stream_destroy_midtoken();
     test_stream_destroy_never_fed();
     test_stream_chunked_escape();
+    test_stream_chunked_comment();
     test_stream_chunked_utf8();
     test_stream_large_chunks();
 }
