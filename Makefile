@@ -1,9 +1,9 @@
 CC ?= gcc
 CSTD := -std=c11
-WARN := -Wall -Wextra -Wpedantic
-INCLUDES := -Iinclude -Isrc -Ithird_party/minicoro
+WARN := -Wall -Wextra
+INCLUDES := -Iinclude -Isrc
 
-LIB_SRCS := src/pbuf.c src/pnode.c src/serialize.c src/parser.c src/minicoro_impl.c
+LIB_SRCS := src/pbuf.c src/pnode.c src/serialize.c src/parser.c src/stackless.c
 TEST_SRCS := tests/test_main.c tests/test_pnode.c tests/test_serialize.c tests/test_parser.c tests/test_stream.c
 
 BUILD_DIR ?= build/debug
@@ -25,12 +25,6 @@ $(BUILD_DIR)/libpexpr.a: $(LIB_OBJS)
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
-
-# minicoro's assembly context-switch path does pointer tricks -Wpedantic
-# flags in vendored code we don't control; silence it there only.
-$(BUILD_DIR)/src/minicoro_impl.o: src/minicoro_impl.c
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Wno-pedantic -c $< -o $@
 
 $(TEST_BIN): $(LIB_OBJS) $(TEST_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
@@ -68,7 +62,7 @@ coverage:
 	lcov --capture --directory build/coverage --base-directory . \
 		--output-file build/coverage/coverage.raw.info --rc branch_coverage=0
 	lcov --remove build/coverage/coverage.raw.info \
-		'*/third_party/*' '*/tests/*' \
+		'*/tests/*' \
 		--output-file build/coverage/coverage.info --rc branch_coverage=0
 	genhtml build/coverage/coverage.info --output-directory build/coverage/html --rc branch_coverage=0
 	lcov --summary build/coverage/coverage.info --rc branch_coverage=0

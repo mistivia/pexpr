@@ -202,10 +202,10 @@ Key points:
   failure (leaves `self` in `P_PARSER_FAIL`, still safe to retry or
   destroy).
 - **`p_parser_destroy()` is always safe**, including mid-parse. Both it and
-  `p_parser_reset()` are built on top of a
-  [minicoro](https://github.com/edubart/minicoro) coroutine so the
-  recursive-descent parser can be written as ordinary, synchronous-looking
-  code; abandoning mid-parse reclaims whatever partial value tree and
+  `p_parser_reset()` are built on top of a small stackless coroutine
+  (`src/stackless.{c,h}`) so the recursive-descent parser can be written as
+  ordinary, synchronous-looking code; abandoning mid-parse reclaims whatever
+  partial value tree and
   scratch buffers were in flight (see the `open_lists` / `active_buf`
   comment in `src/parser.c`).
 - `p_parser_errmsg()` is always safe to call and never returns `NULL`

@@ -87,10 +87,9 @@ reuse across documents and abandoning a parse mid-stream.
 
 ## Building
 
-No external dependencies besides the vendored
-[minicoro](https://github.com/edubart/minicoro) (`third_party/minicoro/`,
-used to write the streaming parser as ordinary synchronous-looking code
-instead of a hand-rolled state machine).
+No external dependencies. The streaming parser is written as ordinary
+synchronous-looking code (instead of a hand-rolled state machine) on top of a
+small vendored stackless-coroutine library (`src/stackless.{c,h}`).
 
 ```sh
 make            # build build/debug/libpexpr.a

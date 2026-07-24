@@ -286,6 +286,10 @@ static void test_parse_errors(void) {
     n = parse("-abc"); CHECK(!pnode_ok(&n)); pnode_drop(&n);
     n = parse("1.2.3"); CHECK(!pnode_ok(&n)); pnode_drop(&n); /* strtod stops early -> trailing junk */
     n = parse("1e"); CHECK(!pnode_ok(&n)); pnode_drop(&n);    /* exponent marker with no digits */
+    n = parse("1-2"); CHECK(!pnode_ok(&n)); pnode_drop(&n);   /* integer token, strtoll stops at '-' */
+    n = parse("99999999999999999999"); CHECK(!pnode_ok(&n)); pnode_drop(&n); /* strtoll ERANGE */
+    n = parse("\"trailing\\"); CHECK(!pnode_ok(&n)); pnode_drop(&n); /* backslash then EOF */
+    n = parse("\"\\xZZ\""); CHECK(!pnode_ok(&n)); pnode_drop(&n);     /* first \x hex digit invalid */
 }
 
 static void test_parse_deep_nesting(void) {
